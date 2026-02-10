@@ -1,2 +1,242 @@
-#Group Project Website 
-print('test')
+# app.R
+# Starter Shiny app (mock data) for:
+# - Querying single-gene expression by name
+# - Visualising cell clusters with simple interactive controls
+#
+# Swap out the mock data loaders with real data later.
+
+library(shiny)
+library(bslib)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(stringr)
+
+# ----------------------------
+# Mock data generator (REMOVE later)
+# ----------------------------
+make_mock_data <- function(n_cells = 2000, genes = c("SOX2", "EOMES", "NEUROD6", "PAX6", "TBR1")) {
+  set.seed(42)
+  
+  clusters <- paste0("c", 1:8)
+  cell_types <- c("AP", "BP", "Neuron", "Mesenchymal")
+  datasets <- c("Fetal", "Organoid")
+  
+  cells <- tibble(
+    cell_id   = paste0("cell_", seq_len(n_cells)),
+    cluster   = sample(clusters, n_cells, replace = TRUE),
+    cell_type = sample(cell_types, n_cells, replace = TRUE, prob = c(0.35, 0.10, 0.45, 0.10)),
+    dataset   = sample(datasets, n_cells, replace = TRUE)
+  )
+  
+  # Make two embeddings to support the "optional" embedding switch
+  cells <- cells %>%
+    mutate(
+      UMAP_1 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.25,
+      UMAP_2 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.15,
+      TSNE_1 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.20,
+      TSNE_2 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.10
+    )
+  
+  # Long format expression table:
+  # one row per (cell, gene) — ok for mock; real data should be precomputed summaries or sparse matrix.
+  expr <- expand.grid(cell_id = cells$cell_id, gene = genes, stringsAsFactors = FALSE) %>%
+    as_tibble() %>%
+    mutate(
+      # Fake "expression" with some cluster/cell_type effects
+      expr = pmax(
+        0,
+        rnorm(n(), mean = 0.6, sd = 0.7) +
+          ifelse(gene %in% c("SOX2", "PAX6") & cells$cell_type[match(cell_id, cells$cell_id)] == "AP", 1.2, 0) +
+          ifelse(gene == "EOMES" & cells$cell_type[match(cell_id, cells$cell_id)] == "BP", 1.0, 0) +
+          ifelse(gene %in% c("NEUROD6", "TBR1") & cells$cell_type[match(cell_id, cells$cell_id)] == "Neuron", 1.1, 0)
+      )
+    )
+  
+  list(cells = cells, expr = expr, genes = genes)
+}
+
+mock <- make_mock_data()
+
+# ----------------------------
+# UI
+# ----------------------------
+ui <- fluidPage(
+  theme = bs_theme(version = 5, bootswatch = "flatly"),
+  titlePanel("Cerebral Organoid scRNA-seq Explorer (Starter)"),
+  
+  tabsetPanel(
+    tabPanel(
+      "Gene query",
+      br(),
+      fluidRow(
+        column(
+          4,
+          card(
+            card_header("Search"),
+            selectizeInput(
+              "gene",
+              "Gene symbol",
+              choices = mock$genes,
+              selected = "SOX2",
+              options = list(placeholder = "Type a gene (e.g., SOX2)", create = FALSE)
+            ),
+            radioButtons(
+              "gene_plot",
+              "Gene plot type",
+              choices = c("Violin by cluster" = "violin", "Expression on embedding" = "feature"),
+              selected = "violin"
+            ),
+            actionButton("go_gene", "Search", class = "btn-primary")
+          )
+        ),
+        column(
+          8,
+          card(
+            card_header("Results"),
+            uiOutput("gene_status"),
+            plotOutput("gene_plot_out", height = "380px"),
+            br(),
+            tableOutput("gene_table_out")
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Clusters (optional interactivity)",
+      br(),
+      fluidRow(
+        column(
+          4,
+          card(
+            card_header("Plot controls"),
+            selectInput("embedding", "Embedding", choices = c("UMAP", "tSNE"), selected = "UMAP"),
+            selectInput("colour_by", "Colour by", choices = c("cluster", "cell_type", "dataset"), selected = "cluster"),
+            sliderInput("pt_size", "Point size", min = 0.5, max = 4, value = 1.5, step = 0.1),
+            sliderInput("alpha", "Alpha", min = 0.05, max = 1, value = 0.5, step = 0.05),
+            checkboxInput("show_legend", "Show legend", value = TRUE)
+          )
+        ),
+        column(
+          8,
+          card(
+            card_header("Cluster view"),
+            plotlyOutput("cluster_plot", height = "520px")
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "About",
+      br(),
+      card(
+        card_header("What this app will do"),
+        p("This is a starter Shiny app built with mock data."),
+        tags$ul(
+          tags$li("Gene query tab: type a gene name and see expression by cluster or on an embedding."),
+          tags$li("Clusters tab: interact with a cluster scatter (embedding switch + colour/size/alpha)."),
+          tags$li("Later you will replace the mock data with real scRNA-seq-derived inputs.")
+        ),
+        p("Robustness features included: input validation, controlled reactivity (search button), modular data expectations.")
+      )
+    )
+  )
+)
+
+# ----------------------------
+# Server
+# ----------------------------
+server <- function(input, output, session) {
+  
+  # Data "access layer" (swap this later with real loaders)
+  cells <- reactiveVal(mock$cells)
+  expr  <- reactiveVal(mock$expr)
+  genes <- reactiveVal(mock$genes)
+  
+  # ----- Gene query -----
+  gene_data <- eventReactive(input$go_gene, {
+    g <- str_trim(input$gene)
+    
+    validate(
+      need(nzchar(g), "Please enter a gene name."),
+      need(g %in% genes(), paste0("Gene not found: '", g, "'."))
+    )
+    
+    # Join expression for gene onto cells
+    df <- cells() %>%
+      left_join(expr() %>% filter(gene == g), by = "cell_id")
+    
+    validate(need(!all(is.na(df$expr)), "No expression data available for this gene."))
+    
+    df
+  }, ignoreInit = TRUE)
+  
+  output$gene_status <- renderUI({
+    req(input$gene)
+    tags$div(
+      class = "text-muted",
+      paste0("Selected gene: ", input$gene, " (mock dataset)")
+    )
+  })
+  
+  output$gene_plot_out <- renderPlot({
+    df <- gene_data()
+    g <- input$gene
+    
+    if (input$gene_plot == "violin") {
+      ggplot(df, aes(x = cluster, y = expr)) +
+        geom_violin(trim = TRUE) +
+        geom_boxplot(width = 0.15, outlier.size = 0.5) +
+        labs(title = paste0("Expression of ", g, " by cluster"), x = "Cluster", y = "Expression") +
+        theme_minimal()
+    } else {
+      # Feature plot on selected embedding (default UMAP)
+      ggplot(df, aes(x = UMAP_1, y = UMAP_2, colour = expr)) +
+        geom_point(size = 1, alpha = 0.7) +
+        labs(title = paste0("Embedding expression map: ", g), x = "UMAP_1", y = "UMAP_2", colour = "Expr") +
+        theme_minimal()
+    }
+  })
+  
+  output$gene_table_out <- renderTable({
+    df <- gene_data()
+    df %>%
+      group_by(cluster) %>%
+      summarise(
+        avg_expr = mean(expr, na.rm = TRUE),
+        pct_expr = mean(expr > 0, na.rm = TRUE) * 100,
+        n_cells  = dplyr::n(),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(avg_expr))
+  }, digits = 3)
+  
+  # ----- Cluster plot (optional) -----
+  output$cluster_plot <- renderPlotly({
+    df <- cells()
+    
+    xcol <- if (input$embedding == "UMAP") "UMAP_1" else "TSNE_1"
+    ycol <- if (input$embedding == "UMAP") "UMAP_2" else "TSNE_2"
+    
+    p <- ggplot(df, aes_string(x = xcol, y = ycol, colour = input$colour_by,
+                               text = "paste('Cell:', cell_id, '<br>Cluster:', cluster, '<br>Type:', cell_type, '<br>Dataset:', dataset)")) +
+      geom_point(size = input$pt_size, alpha = input$alpha) +
+      labs(
+        title = paste0(input$embedding, " clusters coloured by ", input$colour_by),
+        x = xcol, y = ycol
+      ) +
+      theme_minimal()
+    
+    gg <- ggplotly(p, tooltip = "text")
+    
+    if (!isTRUE(input$show_legend)) {
+      gg <- gg %>% layout(showlegend = FALSE)
+    }
+    
+    gg
+  })
+}
+
+shinyApp(ui, server)
