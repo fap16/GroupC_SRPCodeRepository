@@ -1,149 +1,209 @@
 # app.R
-# Starter Shiny app (mock data) for:
+# Starter Shiny app (firsly using mock data) for:
 # - Querying single-gene expression by name
 # - Visualising cell clusters with simple interactive controls
-#
-# Swap out the mock data loaders with real data later.
 
-library(shiny)
-library(bslib)
-library(ggplot2)
-library(plotly)
-library(dplyr)
-library(stringr)
+#1. Load all packages
 
+library(shiny) #package used to build interactive web apps 
+library(bslib) #package which integrates modern Ui toolkit (bootstrap)
+library(ggplot2) #package producing statistical data or graphics - data visualization 
+library(plotly) #package creating interactive web-based graphs 
+library(dplyr) #package used for data manipulation 
+library(stringr) #package used to make working with strings easier
+library(shinythemes) #allows access to R shiny themes
+#library(Seurat) - used for RNA seq data analysis; will be implemented later.
+
+#2. Generate RNA-seq Data 
+#----------------------------
+# Mock data generator (This section is unneeded --> will be replaced by real data input from the analysis) 
 # ----------------------------
-# Mock data generator (REMOVE later)
-# ----------------------------
+
+#Step 1 - create a function that randomly generates RNA-seq data using the 'function' command'
+  #Name of function = make_mock_data 
+  #n_cells = sets number of cells (aka number of repetition to 2000), genes =c() - creates a vector of gene names. 
+    #cell names will be replaced with the study genes
+  #set.seed - random number generator - HOWEVER, guarantees that the same random values are generated every time the code is run (reproducible/fixed)
+    #number of set.seed() is any number preferred, serves as the seed
 make_mock_data <- function(n_cells = 2000, genes = c("SOX2", "EOMES", "NEUROD6", "PAX6", "TBR1")) {
   set.seed(42)
-  
+
+  #Step 2 - cell cluster names are automatically created - begin with c, numbered 1-8; paste0 function automatically separates using a space.  
   clusters <- paste0("c", 1:8)
+  #defines cell types in a vector 
   cell_types <- c("AP", "BP", "Neuron", "Mesenchymal")
+  #separates data into 2 types 
   datasets <- c("Fetal", "Organoid")
   
+  #Step 3 - cell dataframe created, and cells are assigned IDs before being randomly assigned to different clusters, cell types & datasets (MOCK DATA)  
   cells <- tibble(
     cell_id   = paste0("cell_", seq_len(n_cells)),
-    cluster   = sample(clusters, n_cells, replace = TRUE),
-    cell_type = sample(cell_types, n_cells, replace = TRUE, prob = c(0.35, 0.10, 0.45, 0.10)),
+    cluster   = sample(clusters, n_cells, replace = TRUE), #replace = TRUE - avoids repetition 
+    cell_type = sample(cell_types, n_cells, replace = TRUE, prob = c(0.35, 0.10, 0.45, 0.10)), #0.35-0.10 - probabilities are used to reflect typical cell type proportions 
     dataset   = sample(datasets, n_cells, replace = TRUE)
   )
   
-  # Make two embeddings to support the "optional" embedding switch
+  #Step 4 - cell dataframe/tibble is fed via a pipe, in order to modify it
+    #random numbers of cells (depending on (now labelled) cluster number) separated - aka clusters separated
+      #forms UMAP1 & 2, TSNE 1 & 2 for each cell- allows visualization as 2d coordinates (dots)
+      #multiplying by 0.25-0.10 allows for clusters to shift apart slightly
   cells <- cells %>%
     mutate(
       UMAP_1 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.25,
       UMAP_2 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.15,
       TSNE_1 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.20,
       TSNE_2 = rnorm(n_cells) + as.numeric(factor(cluster)) * 0.10
-    )
+    ) # tSNE = t-distributed Stochastic Neighbor Embedding - allows for 2d visualisation of gene expression 
   
-  # Long format expression table:
-  # one row per (cell, gene) — ok for mock; real data should be precomputed summaries or sparse matrix.
-  expr <- expand.grid(cell_id = cells$cell_id, gene = genes, stringsAsFactors = FALSE) %>%
-    as_tibble() %>%
+  #Step 5: gene expression table formed (mock data)
+    # will create all possible gene-cell combinations 
+  # one row per (cell, gene) — ok for mock data; real data should be precomputed summaries or sparse matrix.
+  expr <- expand.grid(cell_id = cells$cell_id, gene = genes, stringsAsFactors = FALSE) %>% #not factor variables - aka limited/fixed 
+    as_tibble() %>% # creates a dataframe
     mutate(
-      # Fake "expression" with some cluster/cell_type effects
+      # Creates a new column - fake "expression" data with some cluster/cell_type effects
       expr = pmax(
         0,
+        #sets random guidelines 
         rnorm(n(), mean = 0.6, sd = 0.7) +
+          #if-else is used return values according to the guidelines
+            #IF gene is SOX2/PAX6 AND Apical Progenitor cell = add 1.2 ELSE add 0 
+            #IF genes is EOMES and Basal Progenitor = add 1,0 ELSE add 0 
+            #IF gene is NEUROD6/TBR1 and Neuron, add 1.1, ELSE add 0 
+              #categorises cell types using match function 
           ifelse(gene %in% c("SOX2", "PAX6") & cells$cell_type[match(cell_id, cells$cell_id)] == "AP", 1.2, 0) +
           ifelse(gene == "EOMES" & cells$cell_type[match(cell_id, cells$cell_id)] == "BP", 1.0, 0) +
           ifelse(gene %in% c("NEUROD6", "TBR1") & cells$cell_type[match(cell_id, cells$cell_id)] == "Neuron", 1.1, 0)
       )
     )
   
+  #Step 6: list object created - container of 3 elements, which creates them as objects in environment 
+    #name=object
   list(cells = cells, expr = expr, genes = genes)
 }
 
+#Step 7: reassign initial function into mock
+  #mock$cells will show the cell data 
+#function will now run to create mock data 
 mock <- make_mock_data()
 
+#OVERVIEW - mock function creates 4 main datatypes: 
+  #1. cells dataframe (tibble) - contains cell metadata & embeds coordinates; used for: UMAP plotting, clustering/cell type colour coding & cell filtering 
+  #2. expression (expr) dataframe (tibble) - contains cell_id, gene and matching expression levels (numeric val); used to plot gene expression, make violin plots and colour code expression. Also used to calculate summaries.
+  #3. genes vector - just a list of genes used for shiny drop downs & subsetting expression. Creates ref list of all the gene types  
+  #4. list which combines all elements into one object (within the environment)
+
+#PLAN - for real, raw data 
+  #1. raw data of the cell count will be inputted - as a csv: genes as rows, cells as columns and each value being a raw count
+  #2. A Seurat object will be created, storing the raw counts, cell clusters, metadata(id, cell types), embeddings (aka UMAP & TSNE) 
+  #3. Data is refined (repeats, low quality data removed), and data is normalized
+  #4. Key varying genes are found - reduces noise and focuses on significant/meaningful differences 
+  #5. Scale the data for gene expression 
+  #6. Creation of cell clusters
+  #7. Embedding for visualization are created - UMAP
+  #8. Data will be extracted to form dataframes & eventually an object 
+
 # ----------------------------
-# UI
+#3. Set up Web App UI
 # ----------------------------
+
+#Step 1 - Create a UI container 
+  #fluidPage function creates typical responsive layout (works regardless of screen size )
 ui <- fluidPage(
-  theme = bs_theme(version = 5, bootswatch = "flatly"),
+  #apply theme - package allows access to any theme; also sets title within the title panel
+  theme = shinytheme("flatly"),
   titlePanel("Cerebral Organoid scRNA-seq Explorer (Starter)"),
   
+  #Step 2 - Creation of TAB 1 - Gene Query: overview of expression & violin plot visual w/ associated dataset 
+    # Contains 2 sections using card layout - Search & Results 
+    # Essentially horizontal card layout to make up the main page content 
   tabsetPanel(
     tabPanel(
       "Gene query",
       br(),
       fluidRow(
-        column(
-          4,
-          card(
-            card_header("Search"),
-            selectizeInput(
-              "gene",
+        column( # this column/section serves to create the SEARCH QUERY
+          4, #width 4/12 size 
+          card( #bootstrap style box panel sections 
+            card_header("Search"), #section name = Search 
+            selectizeInput( # function for a searchable dropdown input 
+              "gene", #input ID used for server logic (to connect)
               "Gene symbol",
-              choices = mock$genes,
-              selected = "SOX2",
-              options = list(placeholder = "Type a gene (e.g., SOX2)", create = FALSE)
+              choices = mock$genes, #creates options generated from the genes vector
+              selected = "SOX2", # sets a default 'selected' value 
+              options = list(placeholder = "Type a gene (e.g., SOX2)", create = FALSE) #sets typical text to be found in search bar 
             ),
-            radioButtons(
-              "gene_plot",
-              "Gene plot type",
-              choices = c("Violin by cluster" = "violin", "Expression on embedding" = "feature"),
-              selected = "violin"
+            radioButtons( #allows selection from an exclusive list - set and can be used for future reactive behaviour 
+              "gene_plot", #input for exclusive gene list
+              "Gene plot type", #title of button/ indicates selection option  
+              choices = c("Violin by cluster" = "violin", "Expression on embedding" = "feature"), #types of plots & titles - violin OR UMAP
+              selected = "violin" #default choice
             ),
-            actionButton("go_gene", "Search", class = "btn-primary")
+            actionButton("go_gene", "Search", class = "btn-primary") # Search button for specific gene of choice - triggers an action in server logic (controlled reactivity); class - bootstrap styling
           )
         ),
-        column(
-          8,
+        column( #second section (main) on interface 
+          8, #8/12 width 
           card(
             card_header("Results"),
-            uiOutput("gene_status"),
-            plotOutput("gene_plot_out", height = "380px"),
-            br(),
-            tableOutput("gene_table_out")
+            uiOutput("gene_status"), #dynamic UI - allows automatic response - either Gene Found/ Not Found
+            plotOutput("gene_plot_out", height = "380px"), #outputs plot according to type selected (programmed above - violin/UMAP)
+            br(), #line break, serves visual purpose of spacing 
+            tableOutput("gene_table_out") #produces a table underneath of specific expression values
           )
         )
       )
     ),
     
-    tabPanel(
-      "Clusters (optional interactivity)",
+    #Step 3 - Creation of TAB 2 - Clusters - user interaction with plot controls & creation of overall gene expression clusters in either UMAP or tNSE
+    tabPanel( 
+      "Clusters", #title
       br(),
       fluidRow(
-        column(
-          4,
+        column(#first section of page - plot control option selection
+          4, #4/12 width
           card(
-            card_header("Plot controls"),
-            selectInput("embedding", "Embedding", choices = c("UMAP", "tSNE"), selected = "UMAP"),
-            selectInput("colour_by", "Colour by", choices = c("cluster", "cell_type", "dataset"), selected = "cluster"),
-            sliderInput("pt_size", "Point size", min = 0.5, max = 4, value = 1.5, step = 0.1),
-            sliderInput("alpha", "Alpha", min = 0.05, max = 1, value = 0.5, step = 0.05),
+            card_header("Plot controls"), #title
+            #combination of both selectInput, sliderInput & checkboxInput = all allow user to interact with app & create responsive result according to options provided from the data
+            selectInput("embedding", "Embedding", choices = c("UMAP", "tSNE"), selected = "UMAP"), #embedding = input, Embedding = Label -> input, label of UI; access to user choice of UMAP or tSNE
+            selectInput("colour_by", "Colour by", choices = c("cluster", "cell_type", "dataset"), selected = "cluster"), #highlights method by which the points are coloured - according to clusters
+            sliderInput("pt_size", "Point size", min = 0.5, max = 4, value = 1.5, step = 0.1), #allows adjustment of scatter point size via slider - has min & max range 
+            sliderInput("alpha", "Alpha", min = 0.05, max = 1, value = 0.5, step = 0.05), #allows adjustment of point transparency via slider 
             checkboxInput("show_legend", "Show legend", value = TRUE)
           )
         ),
-        column(
-          8,
+        column( #second section of page - Cluster Plot Visualization 
+          8, #8/12 width 
           card(
             card_header("Cluster view"),
-            plotlyOutput("cluster_plot", height = "520px")
+            plotlyOutput("cluster_plot", height = "520px") #uses plotly package to create interactive (hover) plot  
           )
         )
       )
     ),
     
+    #Step 4 - Creation of TAB 3 - About section
     tabPanel(
       "About",
       br(),
       card(
-        card_header("What this app will do"),
-        p("This is a starter Shiny app built with mock data."),
-        tags$ul(
+        card_header("Purpose of this Platform"),
+        p("This is an app used to represent the gene expression of fetal neocortex developmental genes in  celebral organoids."),
+        tags$ul( #creates an unordered list
           tags$li("Gene query tab: type a gene name and see expression by cluster or on an embedding."),
           tags$li("Clusters tab: interact with a cluster scatter (embedding switch + colour/size/alpha)."),
-          tags$li("Later you will replace the mock data with real scRNA-seq-derived inputs.")
+          tags$li("Real scRNA-seq-derived input is used, method for analysis followed from study by Camp et al. 2015.")
         ),
         p("Robustness features included: input validation, controlled reactivity (search button), modular data expectations.")
       )
     )
   )
 )
+
+#OVERVIEW
+ # - This UI effectively creates a 3 tab Web App, which allows for user interactivity
+ # - Effectively connects option selection/input to data object 'mock' (later will be connected to real data) 
+ # - GOAL - Add additional interactivity to change plot axes and colours - scales already implemented
 
 # ----------------------------
 # Server
