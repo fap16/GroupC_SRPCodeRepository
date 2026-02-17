@@ -302,3 +302,195 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui, server)
+
+
+## UPDATED WEBSITE CODE
+library(shiny)
+library(bslib)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(Seurat)
+library(tibble)
+
+# ----------------------------
+# Load processed outputs (FAST)
+# ----------------------------
+seurat_obj <- readRDS("data/seurat_processed.rds")
+cells_df   <- readRDS("data/cell_metadata.rds")
+genes_vec  <- readRDS("data/genes_vec.rds")
+
+# Ensure cluster is a factor for nice colouring
+cells_df$cluster <- as.factor(cells_df$cluster)
+
+# ----------------------------
+# UI
+# ----------------------------
+ui <- fluidPage(
+  theme = bs_theme(version = 5, bootswatch = "flatly"),
+  titlePanel("Cerebral Organoid scRNA-seq Explorer"),
+  
+  tabsetPanel(
+    tabPanel(
+      "Gene query",
+      br(),
+      fluidRow(
+        column(
+          4,
+          card(
+            card_header("Search"),
+            selectizeInput(
+              "gene",
+              "Gene symbol",
+              choices = genes_vec,
+              selected = if ("SOX2" %in% genes_vec) "SOX2" else genes_vec[1],
+              options = list(placeholder = "Type a gene (e.g., SOX2)", create = FALSE)
+            ),
+            radioButtons(
+              "gene_plot",
+              "Gene plot type",
+              choices = c("Violin by cluster" = "violin",
+                          "Expression on UMAP" = "feature"),
+              selected = "violin"
+            ),
+            actionButton("go_gene", "Search", class = "btn-primary")
+          )
+        ),
+        column(
+          8,
+          card(
+            card_header("Results"),
+            uiOutput("gene_status"),
+            plotOutput("gene_plot_out", height = "420px"),
+            br(),
+            tableOutput("gene_table_out")
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Clusters (UMAP)",
+      br(),
+      fluidRow(
+        column(
+          4,
+          card(
+            card_header("Plot controls"),
+            selectInput("colour_by", "Colour by", choices = c("cluster"), selected = "cluster"),
+            sliderInput("pt_size", "Point size", min = 0.5, max = 4, value = 1.5, step = 0.1),
+            sliderInput("alpha", "Alpha", min = 0.05, max = 1, value = 0.6, step = 0.05),
+            checkboxInput("show_legend", "Show legend", value = TRUE)
+          )
+        ),
+        column(
+          8,
+          card(
+            card_header("UMAP clusters"),
+            plotlyOutput("cluster_plot", height = "520px")
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "About",
+      br(),
+      card(
+        card_header("What this app does"),
+        p("This Shiny app uses processed data generated from GSE75140 (Camp et al., 2015)."),
+        tags$ul(
+          tags$li("Gene query: search a gene by name and visualise expression."),
+          tags$li("Violin plot: expression by Seurat-derived clusters."),
+          tags$li("UMAP feature plot: expression mapped onto the UMAP embedding."),
+          tags$li("Clusters tab: interactive UMAP scatter coloured by cluster.")
+        ),
+        p("Note: clusters and UMAP were computed locally using Seurat and saved as .rds files for fast, robust deployment.")
+      )
+    )
+  )
+)
+
+# ----------------------------
+# Server
+# ----------------------------
+server <- function(input, output, session) {
+  
+  output$gene_status <- renderUI({
+    req(input$gene)
+    tags$div(class = "text-muted", paste0("Selected gene: ", input$gene))
+  })
+  
+  # Pull per-cell expression for selected gene and join to UMAP + cluster metadata
+  gene_data <- eventReactive(input$go_gene, {
+    g <- trimws(input$gene)
+    
+    validate(
+      need(nzchar(g), "Please enter a gene name."),
+      need(g %in% genes_vec, paste0("Gene not found: '", g, "'."))
+    )
+    
+    FetchData(seurat_obj, vars = g) %>%
+      rownames_to_column("cell_id") %>%
+      rename(expr = !!g) %>%
+      left_join(cells_df, by = "cell_id")
+  }, ignoreInit = TRUE)
+  
+  output$gene_plot_out <- renderPlot({
+    df <- gene_data()
+    g <- input$gene
+    
+    if (input$gene_plot == "violin") {
+      ggplot(df, aes(x = cluster, y = expr)) +
+        geom_violin(trim = TRUE) +
+        geom_boxplot(width = 0.15, outlier.size = 0.5) +
+        theme_minimal() +
+        labs(title = paste("Expression of", g, "by cluster"),
+             x = "Cluster", y = "Expression")
+    } else {
+      validate(need(all(c("UMAP_1", "UMAP_2") %in% names(df)), "UMAP coordinates not available."))
+      ggplot(df, aes(x = UMAP_1, y = UMAP_2, colour = expr)) +
+        geom_point(size = 1.2, alpha = 0.75) +
+        theme_minimal() +
+        labs(title = paste("UMAP expression:", g),
+             x = "UMAP_1", y = "UMAP_2", colour = "Expr")
+    }
+  })
+  
+  output$gene_table_out <- renderTable({
+    df <- gene_data()
+    
+    df %>%
+      group_by(cluster) %>%
+      summarise(
+        avg_expr = mean(expr, na.rm = TRUE),
+        pct_expr = mean(expr > 0, na.rm = TRUE) * 100,
+        n_cells  = n(),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(avg_expr))
+  }, digits = 3)
+  
+  output$cluster_plot <- renderPlotly({
+    validate(need(all(c("UMAP_1", "UMAP_2", "cluster", "cell_id") %in% names(cells_df)),
+                  "cell_metadata.rds is missing required columns."))
+    
+    p <- ggplot(
+      cells_df,
+      aes(
+        x = UMAP_1, y = UMAP_2,
+        colour = cluster,
+        text = paste("Cell:", cell_id, "<br>Cluster:", cluster)
+      )
+    ) +
+      geom_point(size = input$pt_size, alpha = input$alpha) +
+      theme_minimal() +
+      labs(title = "UMAP clusters", x = "UMAP_1", y = "UMAP_2", colour = "Cluster")
+    
+    gg <- ggplotly(p, tooltip = "text")
+    if (!isTRUE(input$show_legend)) gg <- gg %>% layout(showlegend = FALSE)
+    gg
+  })
+}
+
+shinyApp(ui, server)
