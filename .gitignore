@@ -1,0 +1,7 @@
+fastq/
+aligned/
+ref/
+logs/
+*.fastq
+*.sam
+*.bam
