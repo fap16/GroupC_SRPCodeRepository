@@ -14,7 +14,7 @@ mkdir -p /scratch/alice/j/jvk3/sra_cache
 export VDB_CONFIG_DIR=/scratch/alice/j/jvk3/sra_cache
 vdb-config --set /repository/user/main/public/root=/scratch/alice/j/jvk3/sra_cache
 
-# This loop reads your list starting from line 65
+# Loop reads list starting from line 65
 sed -n '65,734p' ~/camp_alice/meta/srr_list.txt | while read SRR; do
     if [ ! -f "${OUT_DIR}/${SRR}_1.fastq" ]; then
         echo "Starting $SRR..."
