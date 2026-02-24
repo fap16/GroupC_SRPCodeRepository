@@ -20,6 +20,6 @@ mkdir -p $OUT_DIR
 while read -r SRR; do
     echo "Processing $SRR"
     prefetch "$SRR"
-    # We tell the tool to use more threads since we now have 48 requested
+    # Tell the tool to use more threads since now have 48 requested
     fasterq-dump "$SRR" --outdir "$OUT_DIR" --threads 12 --split-files
 done < "$ACC_LIST"
