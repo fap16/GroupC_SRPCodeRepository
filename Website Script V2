@@ -22,7 +22,7 @@ cells_df$cluster <- as.factor(cells_df$cluster)
 # UI
 # ----------------------------
 ui <- fluidPage(
-  theme = bs_theme(version = 5, bootswatch = "flatly"),
+  theme = bs_theme(version = 5, bootswatch = "darkly"),
   titlePanel("Cerebral Organoid scRNA-seq Explorer"),
   
   tabsetPanel(
