@@ -1,33 +1,75 @@
-#Website Code using GEO data from the study
-## UPDATED WEBSITE CODE
-library(shiny)
-library(bslib)
-library(ggplot2)
-library(plotly)
-library(dplyr)
-library(Seurat)
-library(tibble)
+#Website Code - V2 
+  #Created using original GEO data from study
 
-# ----------------------------
-# Load processed outputs (FAST)
-# ----------------------------
+#Code Aims:
+#1. Import & organise pre-processed data (Seurat objects)
+#2. Build the UI structure
+#3. Build Gene Search interface 
+#4. Create gene plots (Violin & UMAP)
+#5. Build interactivity
+#6. Connect to server
+#7. Launch webApp!!
+
+#Input:
+  #Seurat Object
+  #Cells Dataframe
+  #Genes Vector 
+#Output:
+  #Interactive WebApp
+
+
+#Initial set up
+
+#1. Set the correct Working Directory
+getwd()
+setwd("/home/fap16/steered_research_project/r_shiny")
+getwd()
+
+#2.Import necessary Packages 
+library(shiny) #UI & interaction
+library(bslib) #UI (bootstrap)
+library(ggplot2) #statistical data visualisation 
+library(plotly) #interactive web based graphics
+library(dplyr) #data manipulation
+library(Seurat) #RNA seq data analysis
+library(tibble) #data frame creation/manipulation
+
+#---
+
+#Step 1: Handling data 
+
+#1. Import the processed data in
 seurat_obj <- readRDS("data/seurat_processed.rds")
+  #contains UMAP, clusters & expression matrix
 cells_df   <- readRDS("data/cell_metadata.rds")
+  #contains UMAP coordinates, cluster names, cell IDs
 genes_vec  <- readRDS("data/genes_vec.rds")
+  #contains list of gene names 
 
-# Ensure cluster is a factor for nice colouring
+#2. Ensure clusters are factors (datatype)
+  #factors are used for categorical variables
 cells_df$cluster <- as.factor(cells_df$cluster)
+  #as.factor function allows clusters to be recognised as groups
+    #works well with later functions, such as colour coding according to groups
 
-# ----------------------------
-# UI
-# ----------------------------
+# ---
+
+#Step 2-5: Build the UI structure 
+
+#1. Create responsive page structure with fluid
 ui <- fluidPage(
-  theme = bs_theme(version = 5, bootswatch = "darkly"),
+  theme = bs_theme(version = 5, bootswatch = "slate"),
   titlePanel("Cerebral Organoid scRNA-seq Explorer"),
+    #Title
   
-  tabsetPanel(
+#2. Create 3 tabs
+  
+#Creation of TAB 1 - Gene Query: overview of expression & violin plot visual w/ associated dataset 
+  #Contains 2 sections using card layout - Search & Results 
+  #Essentially horizontal card layout to make up the main page content 
+tabsetPanel(
     tabPanel(
-      "Gene query",
+      "Gene query", 
       br(),
       fluidRow(
         column(
@@ -36,7 +78,7 @@ ui <- fluidPage(
             card_header("Search"),
             selectizeInput(
               "gene",
-              "Gene symbol",
+              "Gene Name",
               choices = genes_vec,
               selected = if ("SOX2" %in% genes_vec) "SOX2" else genes_vec[1],
               options = list(placeholder = "Type a gene (e.g., SOX2)", create = FALSE)
@@ -44,9 +86,9 @@ ui <- fluidPage(
             radioButtons(
               "gene_plot",
               "Gene plot type",
-              choices = c("Violin by cluster" = "violin",
+              choices = c("Violin by cluster" = "Violin",
                           "Expression on UMAP" = "feature"),
-              selected = "violin"
+              selected = "Violin"
             ),
             actionButton("go_gene", "Search", class = "btn-primary")
           )
@@ -64,6 +106,7 @@ ui <- fluidPage(
       )
     ),
     
+#Creation of TAB 2 - Clusters - user interaction with plot controls & creation of overall gene expression clusters in either UMAP or tNSE
     tabPanel(
       "Clusters (UMAP)",
       br(),
@@ -87,12 +130,12 @@ ui <- fluidPage(
         )
       )
     ),
-    
+#Creation of TAB 3 - About section
     tabPanel(
       "About",
       br(),
       card(
-        card_header("What this app does"),
+        card_header("GROUP C - RNA-seq Data Visualisation Platform"),
         p("This Shiny app uses processed data generated from GSE75140 (Camp et al., 2015)."),
         tags$ul(
           tags$li("Gene query: search a gene by name and visualise expression."),
@@ -106,35 +149,64 @@ ui <- fluidPage(
   )
 )
 
+#OVERVIEW
+# - This UI effectively creates a 3 tab Web App, which allows for user interactivity
+# - Effectively connects option selection/input to data object 'mock' (later will be connected to real data) 
+# - GOAL - Add additional interactivity to change plot axes and colours - scales already implemented
+
+
 # ----------------------------
-# Server
+# Step 6 - Server Set up & Connection
 # ----------------------------
+
+#1. Define the server function for the  webApp
 server <- function(input, output, session) {
+  #input - values input from the user via the UI, ie search bar, sliders, buttons
+  #output - any objects created in the UI, ie plots/ cell data tables 
+  #session - refers to any session specific information - not really relevant here as website uses fixed data 
   
-  output$gene_status <- renderUI({
-    req(input$gene)
+#2. Display the selected gene
+  
+  #Create a dynamic UI element in HTML on the server - gene_status 
+  #allows data created from input (so the output) to be stored; 
+  #will also be live updated to display the currently selected gene name 
+  output$gene_status <- renderUI({ #render = ensures Shiny recognizes the output as UI HTML not a plot figure 
+    req(input$gene) #ensures the gene does exist in the list
     tags$div(class = "text-muted", paste0("Selected gene: ", input$gene))
-  })
+  }) #displays selected gene in a div block on the page 
   
-  # Pull per-cell expression for selected gene and join to UMAP + cluster metadata
-  gene_data <- eventReactive(input$go_gene, {
-    g <- trimws(input$gene)
-    
+#renderPlot() → creates a plot
+#renderTable() → creates a table
+#renderUI() → creates HTML/UI elements dynamically
+  
+#3. Create interaction - reactive output to input   
+  # Display specific cell expression for selected gene and join to UMAP + cluster metadata
+    #creates table underneath plot for selected gene ONLY
+  gene_data <- eventReactive(input$go_gene, { #ensures reaction (change) only occurs due to input 
+    g <- trimws(input$gene) #removes any spaces from gene name in input for accurate searching
+
+    #4. Validate the input 
     validate(
-      need(nzchar(g), "Please enter a gene name."),
-      need(g %in% genes_vec, paste0("Gene not found: '", g, "'."))
+      need(nzchar(g), "Please enter a gene name."), # ensures gene name search is not empty (input)
+      need(g %in% genes_vec, paste0("Gene not found: '", g, "'.")) #ensures selected gene exists in the gene dataset
     )
     
-    FetchData(seurat_obj, vars = g) %>%
-      rownames_to_column("cell_id") %>%
-      rename(expr = !!g) %>%
-      left_join(cells_df, by = "cell_id")
-  }, ignoreInit = TRUE)
+    #5. *** Extract specific gene expression data to fill gene_data table
+    FetchData(seurat_obj, vars = g) %>% #extracts values from the gene 'g' metadata in the seurat object
+      rownames_to_column("cell_id") %>% #converts cell id row names into a column = cell Ids
+      rename(expr = !!g) %>% #renames gene name column to expression; !!g allows dynamic reference to data 
+      left_join(cells_df, by = "cell_id") #connects gene expression data with cell metadata = adds UMAP and cluster info
+  }, ignoreInit = TRUE) #ensures the plots do not appear automatically - only after button input 
   
+  
+  #6. Gene Plot Output 
+  
+  #Creates a dynamic UI output to contain the plots based on input
   output$gene_plot_out <- renderPlot({
     df <- gene_data()
     g <- input$gene
     
+    #Run if user input selects Violin plots 
     if (input$gene_plot == "violin") {
       ggplot(df, aes(x = cluster, y = expr)) +
         geom_violin(trim = TRUE) +
