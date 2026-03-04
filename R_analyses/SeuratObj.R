@@ -1,6 +1,6 @@
 library(Seurat)
 
-#featureCounts output has metadata row at the top so skip
+#featureCounts output has metadata row at the top so skip, change the directory to whichever you put the matrix count data into
 raw_counts <- read.table("/home/jvk3/SRE/camp_gene_counts.txt", header=TRUE, row.names=1, skip=1)
 
 # Keep only 734 sample columns (removing Chr, Start, End, etc.)
