@@ -1,0 +1,237 @@
+setwd("/home/fap16/steered_research_project/r_shiny")
+getwd()
+
+
+# ================================
+# Organoid Explorer (FINAL FIXED)
+# ================================
+
+library(shiny)
+library(bslib)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(Seurat)
+
+# ================================
+# LOAD DATA
+# ================================
+umap_df  <- readRDS("data/umap_coords.rds")
+expr_mat <- readRDS("data/expression_matrix.rds")
+seurat_obj <- readRDS("data/seurat_processed.rds")
+
+# Extract t-SNE
+tsne_df <- as.data.frame(Embeddings(seurat_obj, "tsne"))
+tsne_df$cell_id <- rownames(tsne_df)
+tsne_df$cluster <- Idents(seurat_obj)
+
+# Clean
+colnames(umap_df) <- tolower(colnames(umap_df))
+colnames(tsne_df) <- c("tsne_1", "tsne_2", "cell_id", "cluster")
+
+umap_df$cluster <- as.factor(umap_df$cluster)
+tsne_df$cluster <- as.factor(tsne_df$cluster)
+
+genes <- rownames(expr_mat)
+
+# ================================
+# UI
+# ================================
+ui <- fluidPage(
+  
+  theme = bs_theme(version = 5, bootswatch = "darkly"),
+  
+  titlePanel("Cerebral Organoid scRNA-seq Explorer"),
+  
+  tabsetPanel(
+    
+    # ----------------------------
+    # GENE TAB
+    # ----------------------------
+    tabPanel(
+      "Gene query",
+      br(),
+      
+      fluidRow(
+        
+        column(
+          4,
+          card(
+            card_header("Search"),
+            
+            selectizeInput(
+              "gene",
+              "Gene symbol",
+              choices = genes,
+              selected = genes[1]
+            ),
+            
+            radioButtons(
+              "plot_type",
+              "Plot type",
+              choices = c("UMAP" = "umap", "Violin" = "violin"),
+              selected = "umap"
+            ),
+            
+            actionButton("go", "Search")
+          )
+        ),
+        
+        column(
+          8,
+          card(
+            card_header("Results"),
+            
+            fluidRow(
+              
+              column(
+                7,
+                plotOutput("gene_plot", height = "420px")
+              ),
+              
+              column(
+                5,
+                div(
+                  style = "height:420px; overflow-y:auto;",
+                  tableOutput("gene_table")
+                )
+              )
+            )
+          )
+        )
+      )
+    ),
+    
+    # ----------------------------
+    # UMAP TAB
+    # ----------------------------
+    tabPanel(
+      "UMAP Clusters",
+      plotlyOutput("umap_plot", height = "600px")
+    ),
+    
+    # ----------------------------
+    # t-SNE TAB
+    # ----------------------------
+    tabPanel(
+      "t-SNE Clusters",
+      plotlyOutput("tsne_plot", height = "600px")
+    )
+  )
+)
+
+# ================================
+# SERVER
+# ================================
+server <- function(input, output, session) {
+  
+  # ----------------------------
+  # Gene data
+  # ----------------------------
+  gene_data <- eventReactive(input$go, {
+    
+    req(input$gene)
+    
+    g <- input$gene
+    expr <- expr_mat[g, , drop = TRUE]
+    
+    df <- data.frame(
+      cell_id = colnames(expr_mat),
+      expr = as.numeric(expr)
+    )
+    
+    idx <- match(df$cell_id, umap_df$cell_id)
+    
+    df$umap_1 <- umap_df$umap_1[idx]
+    df$umap_2 <- umap_df$umap_2[idx]
+    df$cluster <- umap_df$cluster[idx]
+    
+    df <- df[complete.cases(df), ]
+    
+    df
+  })
+  
+  # ----------------------------
+  # MAIN PLOT (UMAP or Violin)
+  # ----------------------------
+  output$gene_plot <- renderPlot({
+    
+    df <- gene_data()
+    req(df)
+    
+    g <- input$gene
+    
+    if (input$plot_type == "violin") {
+      
+      ggplot(df, aes(cluster, expr)) +
+        geom_violin(fill = "steelblue", alpha = 0.7) +
+        geom_boxplot(width = 0.15, outlier.size = 0.3) +
+        theme_minimal() +
+        labs(
+          title = paste("Expression of", g),
+          x = "Cluster",
+          y = "Expression"
+        )
+      
+    } else {
+      
+      df <- df[order(df$expr), ]
+      
+      ggplot(df, aes(umap_1, umap_2)) +
+        geom_point(aes(color = expr), size = 1.5) +
+        scale_color_viridis_c(option = "magma") +
+        theme_minimal() +
+        labs(
+          title = paste("UMAP:", g),
+          color = "Expression"
+        )
+    }
+  })
+  
+  # ----------------------------
+  # Table
+  # ----------------------------
+  output$gene_table <- renderTable({
+    
+    df <- gene_data()
+    req(df)
+    
+    df %>%
+      group_by(cluster) %>%
+      summarise(
+        avg_expr = mean(expr),
+        pct_expr = mean(expr > 0) * 100,
+        n_cells = n(),
+        .groups = "drop"
+      )
+  })
+  
+  # ----------------------------
+  # UMAP clusters
+  # ----------------------------
+  output$umap_plot <- renderPlotly({
+    
+    p <- ggplot(umap_df, aes(umap_1, umap_2, color = cluster)) +
+      geom_point(size = 1.5) +
+      theme_minimal()
+    
+    ggplotly(p)
+  })
+  
+  # ----------------------------
+  # t-SNE clusters
+  # ----------------------------
+  output$tsne_plot <- renderPlotly({
+    
+    p <- ggplot(tsne_df, aes(tsne_1, tsne_2, color = cluster)) +
+      geom_point(size = 1.5) +
+      theme_minimal()
+    
+    ggplotly(p)
+  })
+}
+
+# ================================
+# RUN APP
+# ================================
+shinyApp(ui, server)
