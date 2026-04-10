@@ -1,0 +1,258 @@
+#Data Processing Script using GEO data
+
+#Set the correct Working Directory
+getwd()
+setwd("/home/fap16/steered_research_project/r_shiny")
+getwd()
+
+#Code Aims:
+#1. Load the GEO gene expression matrix from the paper.
+#2. Clean the gene names/ID -> convert to a numerical complex 
+#3. Convert the data into a Seurat object using the Seurat package
+#4. Create clusters using clustering pipeline
+#5. Create the UMAP visualizations
+#6. Export the data into a separate files (RDS)
+#all the necessary data is compacted for visualization
+#additional saving as CSV for easy access
+
+# Prep: Import necessary packages 
+library(Seurat) #visualizations 
+library(dplyr) #data manipulation
+
+#---
+
+#Step 1: Import GEO data files
+infile <- "GSE75140_hOrg.fetal.master.data.frame.txt.gz"
+if (!file.exists(infile)) stop("File not found: ", infile) 
+#if function used in case of the file not being found; code causes stop message to be produced.
+#Plan - create an alternative pathway to download the data from a URL for final data. 
+#? is it possible to extract the data first, then import it as a txt file. 
+#A txt read in may be more stable than a gzip
+
+#Step 2: Read in GEO data and convert it to a dataframe
+# separate the data by tabs & set headers
+# The first column will be the Cell IDs, and the rest will be the gene expression values
+raw_df <- read.table(
+  gzfile(infile),
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE,
+  quote = "",
+  comment.char = "",
+  check.names = FALSE
+)
+
+View(raw_df)
+
+#---
+
+#Step 3: Cleaning & organizing the data 
+#1. Rename column 1 
+colnames(raw_df)[1] <- "Cell ID"
+
+#2. Remove the apostrophes/extra periods around gene names 
+#Ensures name alone is left.
+
+#Collects all the gene names from the column headers, except the first column (cell IDs)
+gene_cols <- colnames(raw_df)[-1]
+gene_cols <- sub("^X\\.", "", gene_cols) #removes presence of x. (automatically created when column name starts with an X)
+gene_cols <- sub("\\.+$", "", gene_cols)  #removes ./..
+colnames(raw_df)[-1] <- gene_cols #Replaces all the old gene names with the new ones
+
+#3. Collate (cleaned) list of gene names and export as RDS file. 
+#RDS is used because it completely preserves the structure & content - important for the seurat object.
+genes_vec <- colnames(raw_df)[-1]
+saveRDS(genes_vec, "data/genes_vec.rds")
+#message("Cells: ", nrow(raw_df), " | Genes: ", length(genes_vec))
+#will print number of cells & genes
+
+#---
+
+# Step 4: Create a numerical matrix containing cell IDs and their respective expressed gene
+#Conversion to matrix allows for accurate Seurat recognition - more stable/safe
+
+#1. Extract cell IDs from the data frame & create a list
+cell_ids <- raw_df$cell_id
+
+#2. Convert to numeric matrix robustly
+expr_matrix <- data.matrix(raw_df[, -1]) #creates expression matrix from the raw data; also removes first column (strings)
+rownames(expr_matrix) <- cell_ids #exports all cell IDs into a list
+expr_matrix <- t(expr_matrix) #uses transpose function to reverse layout of data frame 
+#Dataframe has the format of rows as cells, columns as genes
+#Seurat REQUIRES rows as genes, columns as cells for accurate recognition
+
+#3. Replace any NAs with 0
+na_count <- sum(is.na(expr_matrix))
+if (na_count > 0) {
+  warning("Found ", na_count, " NA values after numeric conversion. Replacing NAs with 0.")
+  expr_matrix[is.na(expr_matrix)] <- 0
+}
+
+#Additionally, the raw dataframe can be deleted for RAM space optimisation
+#rm(raw_df)
+
+#---
+
+#Step 5: Creation of the Seurat Object
+#Use of CreateSeuratObject function
+#This function requires input of feature (genes) x cells
+seurat_obj <- CreateSeuratObject(
+  counts = expr_matrix,
+  project = "GSE75140",
+  min.cells = 3,
+  min.features = 200
+)
+
+#Counts = Unnormalised data such as raw counts (TPM)
+#Project = Sets project name for object
+#min.cbells = gene must appear in ≥ 3 cells
+#min.features = cell must express ≥ 200 genes
+#min setting ensures significance
+
+
+#==============================
+# 2. CREATE SEURAT OBJECT
+#==============================
+# Check for NAs or zeros in the expression matrix
+stopifnot(!any(is.na(expr_matrix)))  # Check for NAs
+stopifnot(!any(expr_matrix == 0))    # Check for zeros
+
+
+# Create the Seurat object
+seurat_obj <- CreateSeuratObject(
+  counts = expr_matrix,
+  project = "Organoid",
+  min.cells = 3,
+  min.features = 200
+)
+
+# Ensure object is valid
+validObject(seurat_obj)  # Should not return an error
+
+#==============================
+# 3. QC & PREPROCESSING
+#==============================
+
+# Basic QC (optional but recommended)
+seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+
+# Normalize and scale data
+seurat_obj <- NormalizeData(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj)
+
+# Perform PCA
+seurat_obj <- RunPCA(seurat_obj, npcs = 50)
+
+# Use JackStraw to assess significant PCs
+seurat_obj <- JackStraw(seurat_obj, num.replicate = 200)
+
+# Score JackStraw results
+seurat_obj <- ScoreJackStraw(seurat_obj, dims = 1:50)
+
+# Plot JackStraw results to visualize significant PCs
+JackStrawPlot(seurat_obj, dims = 1:50)
+
+# Select significant PCs with p-value < 1e-20
+js <- seurat_obj@reductions$pca@jackstraw$overall.p.values
+significant_pcs <- which(js[, 2] < 1e-20)
+
+# Fallback in case no PCs pass the strict cutoff
+if (length(significant_pcs) < 5) {
+  significant_pcs <- 1:10
+}
+
+cat("Selected PCs:", significant_pcs, "\n")
+
+#==============================
+# 4. CLUSTERING (t-SNE & UMAP)
+#==============================
+
+# Perform t-SNE using significant PCs and perplexity = 5
+seurat_obj <- RunTSNE(
+  seurat_obj,
+  dims = significant_pcs,
+  perplexity = 5
+)
+
+# t-SNE plot (clusters based on gene-associated PCs)
+tsne_plot <- DimPlot(
+  seurat_obj,
+  reduction = "tsne",
+  label = TRUE,
+  pt.size = 1.5
+) + ggtitle("t-SNE Clusters")
+
+# Print t-SNE plot
+print(tsne_plot)
+
+#-------------------------
+# Perform UMAP using significant PCs
+seurat_obj <- RunUMAP(
+  seurat_obj,
+  dims = significant_pcs
+)
+
+# UMAP plot (clusters based on gene-associated PCs)
+umap_plot <- DimPlot(
+  seurat_obj,
+  reduction = "umap",
+  label = TRUE,
+  pt.size = 1.5
+) + ggtitle("UMAP Clusters")
+
+# Print UMAP plot
+print(umap_plot)
+
+#---------------------------
+# Function to plot UMAP for a gene
+plot_gene_umap <- function(seurat_obj, gene) {
+  if (!gene %in% rownames(seurat_obj)) {
+    stop(paste("Gene not found:", gene))
+  }
+  
+  FeaturePlot(
+    seurat_obj,
+    features = gene,
+    reduction = "umap"
+  ) + ggtitle(paste("UMAP:", gene))
+}
+
+#==============================
+# 5. DIFFERENTIAL EXPRESSION
+#==============================
+
+# Perform differential gene expression (ROC test)
+markers <- FindAllMarkers(
+  seurat_obj,
+  only.pos = TRUE,
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+# View marker results
+head(markers)
+
+#==============================
+# 6. EXPORT DATA
+#==============================
+
+# Save Seurat object
+saveRDS(seurat_obj, file = "organoid_seurat.rds")
+
+# Save marker information
+write.csv(markers, "cluster_markers.csv", row.names = FALSE)
+
+# Save UMAP and t-SNE embeddings for fast access in Shiny
+umap_df <- Embeddings(seurat_obj, "umap") %>%
+  as.data.frame() %>%
+  mutate(cell = rownames(.),
+         cluster = seurat_obj$seurat_clusters)
+
+write.csv(umap_df, "umap_embeddings.csv", row.names = FALSE)
+
+tsne_df <- Embeddings(seurat_obj, "tsne") %>%
+  as.data.frame() %>%
+  mutate(cell = rownames(.),
+         cluster = seurat_obj$seurat_clusters)
+
+write.csv(tsne_df, "tsne_embeddings.csv", row.names = FALSE)
