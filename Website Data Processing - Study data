@@ -1,202 +1,208 @@
-#Data Processing Script using GEO data
+#Data Processing using Study data 
 
-#Code Aims:
-#1. Load the GEO gene expression matrix from the paper.
-#2. Clean the gene names/ID -> convert to a numerical complex 
-#3. Convert the data into a Seurat object using the Seurat package
-#4. Create clusters using clustering pipeline
-#5. Create the UMAP visualizations
-#6. Export the data into a separate files (RDS)
-  #all the necessary data is compacted for visualization on the webApp
+# ================================
+# 0. Setup
+# ================================
+library(Seurat)
+library(dplyr)
+library(ggplot2)
 
-# Input:
-  # data/GSE75140_hOrg.fetal.master.data.frame.txt.gz
-# Outputs:
-  # data/seurat_processed.rds
-  # data/cell_metadata.rds
-  # data/genes_vec.rds
-
-
-#---
-
-#Initial Set Up
-
-#1. Set the correct Working Directory
-getwd()
 setwd("/home/fap16/steered_research_project/r_shiny")
-getwd()
+set.seed(42)
 
-
-#2. Import necessary packages 
-library(Seurat) #visualizations 
-library(dplyr) #data manipulation
-
-#---
-
-#Step 1: Import GEO data files
-infile <- "GSE75140_hOrg.fetal.master.data.frame.txt.gz"
-if (!file.exists(infile)) stop("File not found: ", infile) 
-#if function used in case of the file not being found; code causes stop message to be produced.
-  #Plan - create an alternative pathway to download the data from a URL for final data. 
-#? is it possible to extract the data first, then import it as a txt file. 
-  #A txt read in may be more stable than a gzip
-
-#---
-
-#Step 2: Read in GEO data and convert it to a dataframe
-  # separate the data by tabs & set headers
-  # The first column will be the Cell IDs, and the rest will be the gene expression values
+# ================================
+# 1. Load GEO data
+# ================================
 raw_df <- read.table(
-  gzfile(infile),
+  gzfile("GSE75140_hOrg.fetal.master.data.frame.txt.gz"),
   header = TRUE,
   sep = "\t",
   stringsAsFactors = FALSE,
+  check.names = FALSE,
   quote = "",
-  comment.char = "",
-  check.names = FALSE
+  comment.char = ""
 )
 
-View(raw_df)
+# Rename first column
+colnames(raw_df)[1] <- "cell_id"
 
-#---
+# ================================
+# 2. Clean gene names
+# ================================
+gene_names <- colnames(raw_df)[-1]
+gene_names <- gsub('"', '', gene_names)
+gene_names <- sub("^X\\.", "", gene_names)
+gene_names <- trimws(gene_names)
 
-#Step 3: Cleaning & organizing the data 
-#1. Rename column 1 
-colnames(raw_df)[1] <- "Cell ID"
+colnames(raw_df)[-1] <- gene_names
 
-#2. Remove the apostrophes/extra periods around gene names 
-  #Ensures name alone is left.
+# ================================
+# 3. Build expression matrix
+# ================================
+expr_matrix <- as.matrix(raw_df[, -1])
+mode(expr_matrix) <- "numeric"
 
-#Collects all the gene names from the column headers, except the first column (cell IDs)
-gene_cols <- colnames(raw_df)[-1]
-gene_cols <- sub("^X\\.", "", gene_cols) #removes presence of x. (automatically created when column name starts with an X)
-gene_cols <- sub("\\.+$", "", gene_cols)  #removes ./..
-colnames(raw_df)[-1] <- gene_cols #Replaces all the old gene names with the new ones
+rownames(expr_matrix) <- raw_df$cell_id
 
-#3. Collate (cleaned) list of gene names and export as RDS file. 
-  #RDS is used because it completely preserves the structure & content - important for the seurat object.
-genes_vec <- colnames(raw_df)[-1]
-saveRDS(genes_vec, "data/genes_vec.rds")
-#message("Cells: ", nrow(raw_df), " | Genes: ", length(genes_vec))
-  #will print number of cells & genes
+# Transpose → genes x cells
+expr_matrix <- t(expr_matrix)
 
-#---
+# Clean rownames again (IMPORTANT)
+rownames(expr_matrix) <- gsub('"', '', rownames(expr_matrix))
+rownames(expr_matrix) <- trimws(rownames(expr_matrix))
 
-# Step 4: Create a numerical matrix containing cell IDs and their respective expressed gene
-  #Conversion to matrix allows for accurate Seurat recognition - more stable/safe
+# Replace NA
+expr_matrix[is.na(expr_matrix)] <- 0
 
-#1. Extract cell IDs from the data frame & create a list
-cell_ids <- raw_df$cell_id
+cat("Matrix:", dim(expr_matrix), "\n")
 
-#2. Convert to numeric matrix robustly
-expr_matrix <- data.matrix(raw_df[, -1]) #creates expression matrix from the raw data; also removes first column (strings)
-rownames(expr_matrix) <- cell_ids #exports all cell IDs into a list
-expr_matrix <- t(expr_matrix) #uses transpose function to reverse layout of data frame 
-#Dataframe has the format of rows as cells, columns as genes
-  #Seurat REQUIRES rows as genes, columns as cells for accurate recognition
-
-#3. Replace any NAs with 0
-na_count <- sum(is.na(expr_matrix))
-if (na_count > 0) {
-  warning("Found ", na_count, " NA values after numeric conversion. Replacing NAs with 0.")
-  expr_matrix[is.na(expr_matrix)] <- 0
-}
-
-#Additionally, the raw dataframe can be deleted for RAM space optimisation
-#rm(raw_df)
-
-#---
-
-#Step 5: Creation of the Seurat Object
-  #Use of CreateSeuratObject function
-    #This function requires input of feature (genes) x cells
+# ================================
+# 4. Create Seurat object
+# ================================
 seurat_obj <- CreateSeuratObject(
   counts = expr_matrix,
-  project = "GSE75140",
   min.cells = 3,
   min.features = 200
 )
 
-#Counts = Unnormalised data such as raw counts (TPM)
-#Project = Sets project name for object
-#min.cells = gene must appear in ≥ 3 cells
-#min.features = cell must express ≥ 200 genes
-  #min setting ensures significance
-
-#Again, optionally remove the expression matrix, for RAM space
-#rm(expr_matrix)
-
-#---
-
-#Step 6: Seurat Workflow
-
-#1. Normalise the data 
+# ================================
+# 5. Normalize + Scale
+# ================================
 seurat_obj <- NormalizeData(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj)
 
-#2. Identify Variable genes for clustering 
-seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
-
-#3. Scale data - allows for equal contribution = numerical accuracy
-seurat_obj <- ScaleData(seurat_obj, features = VariableFeatures(seurat_obj))
-
-#4. Run Principal Component Analysis - simplifies complex high dimension data while preserving value
-seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(seurat_obj), npcs = 30, verbose = FALSE)
-
-#5. Use Find functions to build clusters and feed them into Seurat Object
-  #Use FindNeighbours to create a neighbour graph (defines similarity network needed for clustering)
-  #Use FindClusters to detect groups, which in turn defines the clusters
-seurat_obj <- FindNeighbors(seurat_obj, dims = 1:20)
-seurat_obj <- FindClusters(seurat_obj, resolution = 0.5)
-
-#6. Run UMAP in order to visualize the clustered data
-seurat_obj <- RunUMAP(seurat_obj, dims = 1:20)
-#dims =1:20 -> means use principal components 1-20 only
-  #Used as early PC values have the most prominent/significant biological signalling & avoids noise 
-
-#---
-
-# Step 7: Save Seurat Object & Visualisation
-
-#1. Save the object as an RDS file in the wd. 
-saveRDS(seurat_obj, "data/seurat_processed.rds")
-
-#2. Extract metadata + UMAP (robust naming)
-# Extract the cell metadata (ie the raw counts)
-meta_df <- seurat_obj@meta.data
-#Re-add the cell_id column removed earlier
-meta_df$cell_id <- rownames(meta_df)
-
-#3. Extract the UMAP coordinates for cluster visualisation on webApp
-
-#Create a UMAP matrix, containing the seurat object & coordinates
-umap_mat <- Embeddings(seurat_obj, "umap")
-
-#Create a UMAP dataframe to store all data
-umap_df <- data.frame(
-  cell_id = rownames(umap_mat),
-  UMAP_1  = umap_mat[, 1],
-  UMAP_2  = umap_mat[, 2],
-  row.names = NULL
+# ================================
+# 6. PCA (ALL genes like paper)
+# ================================
+seurat_obj <- RunPCA(
+  seurat_obj,
+  features = rownames(seurat_obj),
+  npcs = 30
 )
-#Both the matrix (coordinates) & dataframe (Cell IDs) are needed in order to combine visualisation coordinates w/ cell metadata in 1 table.
 
-#Merge the 2 data types
-cells_df <- dplyr::left_join(meta_df, umap_df, by = "cell_id")
+# ================================
+# 7. Choose PCs
+# ================================
+pcs_to_use <- 1:10   # tighter clusters
 
-#Standardize cluster column to ensure 'cluster' column exists, with error loop break 
-if ("seurat_clusters" %in% names(cells_df)) {
-  cells_df$cluster <- cells_df$seurat_clusters
-} else {
-  stop("Could not find 'seurat_clusters' in meta.data. Columns are: ",
-       paste(names(cells_df), collapse = ", "))
+# ================================
+# 8. Clustering
+# ================================
+seurat_obj <- FindNeighbors(seurat_obj, dims = pcs_to_use)
+
+# Resolution sweep → find ~11 clusters
+resolutions <- seq(0.2, 2.0, by = 0.05)
+cluster_results <- data.frame()
+
+for (res in resolutions) {
+  tmp <- FindClusters(seurat_obj, resolution = res, verbose = FALSE)
+  n <- length(unique(Idents(tmp)))
+  cluster_results <- rbind(cluster_results,
+                           data.frame(resolution = res, clusters = n))
 }
 
-#Keep only what needed columns - only what is necessary for the webApp (plus control if present)
-keep_cols <- intersect(c("cell_id", "cluster", "nCount_RNA", "nFeature_RNA", "UMAP_1", "UMAP_2"), names(cells_df))
-cells_df <- cells_df[, keep_cols, drop = FALSE]
-  #Use of intersect function to ensure only data found in all vectors = ensures matching
-#Export the final refined dataframe into one metadata file
-saveRDS(cells_df, "data/cell_metadata.rds")
+print(cluster_results)
 
-#Completed Data Processing!!
-print("DONE: Exported data/seurat_processed.rds and data/cell_metadata.rds")
+# Pick resolution giving 11 clusters
+chosen_res <- cluster_results$resolution[
+  which(cluster_results$clusters == 11)
+][1]
+
+if (is.na(chosen_res)) {
+  chosen_res <- 1.2
+  message("No exact 11 clusters found, using fallback resolution = 1.2")
+}
+
+seurat_obj <- FindClusters(seurat_obj, resolution = chosen_res)
+
+cat("Using resolution:", chosen_res, "\n")
+cat("Clusters:", length(unique(Idents(seurat_obj))), "\n")
+
+# ================================
+# 9. t-SNE (paper)
+# ================================
+seurat_obj <- RunTSNE(
+  seurat_obj,
+  dims = pcs_to_use,
+  perplexity = 5
+)
+
+# ================================
+# 10. UMAP (for Shiny)
+# ================================
+seurat_obj <- RunUMAP(
+  seurat_obj,
+  dims = pcs_to_use,
+  n.neighbors = 30,
+  min.dist = 0.3
+)
+
+# ================================
+# 11. t-SNE Plot (Fig 3D style)
+# ================================
+tsne_df <- as.data.frame(Embeddings(seurat_obj, "tsne"))
+tsne_df$cluster <- as.factor(Idents(seurat_obj))
+
+# Remove NA rows
+tsne_df <- tsne_df[complete.cases(tsne_df), ]
+
+# Cluster centers
+centers <- tsne_df %>%
+  group_by(cluster) %>%
+  summarise(
+    tSNE_1 = mean(tSNE_1),
+    tSNE_2 = mean(tSNE_2),
+    .groups = "drop"
+  )
+
+p <- ggplot(tsne_df, aes(tSNE_1, tSNE_2)) +
+  
+  stat_ellipse(
+    aes(fill = cluster),
+    geom = "polygon",
+    alpha = 0.3,
+    level = 0.7,
+    color = NA
+  ) +
+  
+  geom_point(
+    size = 1.5,
+    color = "black"
+  ) +
+  
+  geom_text(
+    data = centers,
+    aes(label = cluster),
+    size = 5,
+    fontface = "bold"
+  ) +
+  
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(title = "t-SNE (Organoid Clusters)")
+
+print(p)
+
+# ================================
+# 12. SAVE OUTPUTS (for Shiny)
+# ================================
+
+# 1. Full Seurat object (for FeaturePlot)
+saveRDS(seurat_obj, "data/seurat_processed.rds")
+
+# 2. UMAP coordinates
+umap_df <- as.data.frame(Embeddings(seurat_obj, "umap"))
+umap_df$cell_id <- rownames(umap_df)
+umap_df$cluster <- Idents(seurat_obj)
+
+saveRDS(umap_df, "data/umap_coords.rds")
+
+# 3. Expression matrix (fast gene lookup)
+expr_data <- GetAssayData(seurat_obj, layer = "data")
+saveRDS(expr_data, "data/expression_matrix.rds")
+
+# 4. Gene list (for dropdown)
+genes <- rownames(seurat_obj)
+saveRDS(genes, "data/genes.rds")
+
+print("DONE: Ready for Shiny\n")
