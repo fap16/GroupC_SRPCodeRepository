@@ -1,0 +1,208 @@
+#Data Processing w Study data V2 
+
+# ================================
+# 0. Setup
+# ================================
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+setwd("/home/fap16/steered_research_project/r_shiny")
+set.seed(42)
+
+# ================================
+# 1. Load GEO data
+# ================================
+raw_df <- read.table(
+  gzfile("GSE75140_hOrg.fetal.master.data.frame.txt.gz"),
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  quote = "",
+  comment.char = ""
+)
+
+# Rename first column
+colnames(raw_df)[1] <- "cell_id"
+
+# ================================
+# 2. Clean gene names
+# ================================
+gene_names <- colnames(raw_df)[-1]
+gene_names <- gsub('"', '', gene_names)
+gene_names <- sub("^X\\.", "", gene_names)
+gene_names <- trimws(gene_names)
+
+colnames(raw_df)[-1] <- gene_names
+
+# ================================
+# 3. Build expression matrix
+# ================================
+expr_matrix <- as.matrix(raw_df[, -1])
+mode(expr_matrix) <- "numeric"
+
+rownames(expr_matrix) <- raw_df$cell_id
+
+# Transpose → genes x cells
+expr_matrix <- t(expr_matrix)
+
+# Clean rownames again (IMPORTANT)
+rownames(expr_matrix) <- gsub('"', '', rownames(expr_matrix))
+rownames(expr_matrix) <- trimws(rownames(expr_matrix))
+
+# Replace NA
+expr_matrix[is.na(expr_matrix)] <- 0
+
+cat("Matrix:", dim(expr_matrix), "\n")
+
+# ================================
+# 4. Create Seurat object
+# ================================
+seurat_obj <- CreateSeuratObject(
+  counts = expr_matrix,
+  min.cells = 3,
+  min.features = 200
+)
+
+# ================================
+# 5. Normalize + Scale
+# ================================
+seurat_obj <- NormalizeData(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj)
+
+# ================================
+# 6. PCA (ALL genes like paper)
+# ================================
+seurat_obj <- RunPCA(
+  seurat_obj,
+  features = rownames(seurat_obj),
+  npcs = 30
+)
+
+# ================================
+# 7. Choose PCs
+# ================================
+pcs_to_use <- 1:10   # tighter clusters
+
+# ================================
+# 8. Clustering
+# ================================
+seurat_obj <- FindNeighbors(seurat_obj, dims = pcs_to_use)
+
+# Resolution sweep → find ~11 clusters
+resolutions <- seq(0.2, 2.0, by = 0.05)
+cluster_results <- data.frame()
+
+for (res in resolutions) {
+  tmp <- FindClusters(seurat_obj, resolution = res, verbose = FALSE)
+  n <- length(unique(Idents(tmp)))
+  cluster_results <- rbind(cluster_results,
+                           data.frame(resolution = res, clusters = n))
+}
+
+print(cluster_results)
+
+# Pick resolution giving 11 clusters
+chosen_res <- cluster_results$resolution[
+  which(cluster_results$clusters == 11)
+][1]
+
+if (is.na(chosen_res)) {
+  chosen_res <- 1.2
+  message("⚠️ No exact 11 clusters found, using fallback resolution = 1.2")
+}
+
+seurat_obj <- FindClusters(seurat_obj, resolution = chosen_res)
+
+cat("Using resolution:", chosen_res, "\n")
+cat("Clusters:", length(unique(Idents(seurat_obj))), "\n")
+
+# ================================
+# 9. t-SNE (paper)
+# ================================
+seurat_obj <- RunTSNE(
+  seurat_obj,
+  dims = pcs_to_use,
+  perplexity = 5
+)
+
+# ================================
+# 10. UMAP (for Shiny)
+# ================================
+seurat_obj <- RunUMAP(
+  seurat_obj,
+  dims = pcs_to_use,
+  n.neighbors = 30,
+  min.dist = 0.3
+)
+
+# ================================
+# 11. t-SNE Plot (Fig 3D style)
+# ================================
+tsne_df <- as.data.frame(Embeddings(seurat_obj, "tsne"))
+tsne_df$cluster <- as.factor(Idents(seurat_obj))
+
+# Remove NA rows
+tsne_df <- tsne_df[complete.cases(tsne_df), ]
+
+# Cluster centers
+centers <- tsne_df %>%
+  group_by(cluster) %>%
+  summarise(
+    tSNE_1 = mean(tSNE_1),
+    tSNE_2 = mean(tSNE_2),
+    .groups = "drop"
+  )
+
+p <- ggplot(tsne_df, aes(tSNE_1, tSNE_2)) +
+  
+  stat_ellipse(
+    aes(fill = cluster),
+    geom = "polygon",
+    alpha = 0.3,
+    level = 0.7,
+    color = NA
+  ) +
+  
+  geom_point(
+    size = 1.5,
+    color = "black"
+  ) +
+  
+  geom_text(
+    data = centers,
+    aes(label = cluster),
+    size = 5,
+    fontface = "bold"
+  ) +
+  
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(title = "t-SNE (Organoid Clusters)")
+
+print(p)
+
+# ================================
+# 12. SAVE OUTPUTS (for Shiny)
+# ================================
+
+# 1. Full Seurat object (for FeaturePlot)
+saveRDS(seurat_obj, "data/seurat_processed.rds")
+
+# 2. UMAP coordinates
+umap_df <- as.data.frame(Embeddings(seurat_obj, "umap"))
+umap_df$cell_id <- rownames(umap_df)
+umap_df$cluster <- Idents(seurat_obj)
+
+saveRDS(umap_df, "data/umap_coords.rds")
+
+# 3. Expression matrix (fast gene lookup)
+expr_data <- GetAssayData(seurat_obj, layer = "data")
+saveRDS(expr_data, "data/expression_matrix.rds")
+
+# 4. Gene list (for dropdown)
+genes <- rownames(seurat_obj)
+saveRDS(genes, "data/genes.rds")
+
+print("DONE: Ready for Shiny\n")
