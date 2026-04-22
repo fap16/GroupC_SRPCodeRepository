@@ -1,127 +1,388 @@
 # ================================
-# Organoid Explorer
+# LIBRARIES
 # ================================
-# Updated to include 5 new tabs:
-#   Tab 1: Study Comparison (Fig 3D)
-#   Tab 2: Recreated Gene Query
-#   Tab 3: Alternate Pipeline Gene Query
-#   Tab 4: Monocle Figure Comparison
-#   Tab 5: Heatmaps / Alternate Figures
-#
-# NOTE:
-# Search for "# TODO:" comments throughout this file.
-# These mark where you need to plug in the data files and figures.
-# ================================
-
-setwd("/home/fap16/steered_research_project/r_shiny")
-getwd()
-
 library(shiny)
 library(bslib)
-library(ggplot2)
 library(plotly)
 library(dplyr)
 library(Seurat)
 
 # ================================
-# LOAD DATA — ORIGINAL DATASET
+# PATHS
 # ================================
-umap_df    <- readRDS("data/umap_coords.rds")
-expr_mat   <- readRDS("data/expression_matrix.rds")
-seurat_obj <- readRDS("data/seurat_processed.rds")
+app_dir  <- normalizePath(".", winslash = "/", mustWork = TRUE)
+data_dir <- file.path(app_dir, "data")
+www_dir  <- file.path(app_dir, "www")
 
-# Extract t-SNE
-tsne_df <- as.data.frame(Embeddings(seurat_obj, "tsne"))
-tsne_df$cell_id <- rownames(tsne_df)
-tsne_df$cluster <- Idents(seurat_obj)
-
-# Clean column names
-colnames(umap_df) <- tolower(colnames(umap_df))
-colnames(tsne_df) <- c("tsne_1", "tsne_2", "cell_id", "cluster")
-
-umap_df$cluster <- as.factor(umap_df$cluster)
-tsne_df$cluster <- as.factor(tsne_df$cluster)
-
-genes <- rownames(expr_mat)
+# Explicit static path
+addResourcePath("static", www_dir)
 
 # ================================
-# LOAD DATA — RECREATED DATASET
-# TODO: Replace these with the correct paths to the recreated dataset RDS files
-# The recreated dataset uses the same format as the original
+# STARTUP CHECKS
 # ================================
-# recreated_umap_df  <- readRDS("data/recreated_umap_coords.rds")
-# recreated_expr_mat <- readRDS("data/recreated_expression_matrix.rds")
-# recreated_genes    <- rownames(recreated_expr_mat)
+required_dirs <- c(data_dir, www_dir)
+missing_dirs <- required_dirs[!dir.exists(required_dirs)]
+
+if (length(missing_dirs) > 0) {
+  stop(
+    paste(
+      "Missing required directory/directories:",
+      paste(missing_dirs, collapse = ", ")
+    )
+  )
+}
+
+required_data_files <- c(
+  "pre_2016_umap_coords.rds",
+  "pre_2016_seurat.rds",
+  "pre_2016_expression_matrix.rds",
+  "post_2016_umap_coords.rds",
+  "post_2016_seurat.rds",
+  "post_2016_expression_matrix.rds"
+)
+
+required_image_files <- c(
+  "cellcomp_post2016.png",
+  "cellcomp_pre2016.png",
+  "fig3d_geo.png",
+  "fig3d_post2016.png",
+  "fig3d_pre2016.png",
+  "fig3e_post2016.png",
+  "fig3e_pre2016.png",
+  "fig3f_post2016.png",
+  "fig3f_pre2016.png",
+  "monocle_geo.png",
+  "monocle_post2016.png",
+  "monocle_pre2016.png"
+)
+
+missing_data_files <- required_data_files[
+  !file.exists(file.path(data_dir, required_data_files))
+]
+
+missing_image_files <- required_image_files[
+  !file.exists(file.path(www_dir, required_image_files))
+]
+
+if (length(missing_data_files) > 0) {
+  stop(
+    paste(
+      "Missing required data file(s):",
+      paste(missing_data_files, collapse = ", ")
+    )
+  )
+}
+
+if (length(missing_image_files) > 0) {
+  stop(
+    paste(
+      "Missing required image file(s) in www/:",
+      paste(missing_image_files, collapse = ", ")
+    )
+  )
+}
 
 # ================================
-# LOAD DATA — STAR ALTERNATIVE PIPELINE DATASET
-# TODO: Replace these with the correct paths to the STAR dataset RDS files
+# LOAD DATA
 # ================================
-# star_umap_df  <- readRDS("data/star_umap_coords.rds")
-# star_expr_mat <- readRDS("data/star_expression_matrix.rds")
-# star_genes    <- rownames(star_expr_mat)
+# -------- PRE 2016 --------
+pre_umap_mat <- readRDS(file.path(data_dir, "pre_2016_umap_coords.rds"))
+pre_seurat   <- readRDS(file.path(data_dir, "pre_2016_seurat.rds"))
+pre_expr_mat <- readRDS(file.path(data_dir, "pre_2016_expression_matrix.rds"))
+
+pre_umap_df <- as.data.frame(pre_umap_mat)
+colnames(pre_umap_df) <- tolower(colnames(pre_umap_df))
+pre_umap_df$cell_id <- rownames(pre_umap_df)
+
+pre_common_cells <- Reduce(intersect, list(
+  colnames(pre_expr_mat),
+  pre_umap_df$cell_id
+))
+
+pre_expr_mat <- pre_expr_mat[, pre_common_cells, drop = FALSE]
+pre_umap_df  <- pre_umap_df[match(pre_common_cells, pre_umap_df$cell_id), ]
+pre_umap_df$cluster <- as.factor(Idents(pre_seurat)[pre_common_cells])
+
+pre_genes <- rownames(pre_expr_mat)
+
+# -------- POST 2016 --------
+post_umap_mat <- readRDS(file.path(data_dir, "post_2016_umap_coords.rds"))
+post_seurat   <- readRDS(file.path(data_dir, "post_2016_seurat.rds"))
+post_expr_mat <- readRDS(file.path(data_dir, "post_2016_expression_matrix.rds"))
+
+post_umap_df <- as.data.frame(post_umap_mat)
+colnames(post_umap_df) <- tolower(colnames(post_umap_df))
+post_umap_df$cell_id <- rownames(post_umap_df)
+
+post_common_cells <- Reduce(intersect, list(
+  colnames(post_expr_mat),
+  post_umap_df$cell_id
+))
+
+post_expr_mat <- post_expr_mat[, post_common_cells, drop = FALSE]
+post_umap_df  <- post_umap_df[match(post_common_cells, post_umap_df$cell_id), ]
+post_umap_df$cluster <- as.factor(Idents(post_seurat)[post_common_cells])
+
+post_genes <- rownames(post_expr_mat)
+
+# ================================
+# HELPERS
+# ================================
+tab_description <- function(text) {
+  tags$p(
+    text,
+    style = "margin: 15px 0 10px 0; color: #adb5bd; font-size: 15px;"
+  )
+}
+
+section_title <- function(text) {
+  tags$h4(
+    text,
+    style = "margin-top: 20px; margin-bottom: 10px;"
+  )
+}
+
+# Cache-busted static image path based on modification time
+static_img_src <- function(filename) {
+  full_path <- file.path(www_dir, filename)
+  
+  if (!file.exists(full_path)) {
+    stop(paste("Image file not found:", filename))
+  }
+  
+  version_tag <- as.integer(file.info(full_path)$mtime)
+  paste0("static/", filename, "?v=", version_tag)
+}
+
+image_panel_half <- function(src, label, description = NULL, img_height = "420px") {
+  column(
+    width = 6,
+    tags$div(
+      style = "padding: 10px;",
+      if (!is.null(description)) {
+        tags$div(
+          description,
+          style = "margin-bottom:10px; color:#adb5bd; font-size:14px;"
+        )
+      },
+      tags$div(
+        style = paste0(
+          "height:", img_height, "; ",
+          "display:flex; ",
+          "align-items:center; ",
+          "justify-content:center; ",
+          "overflow:hidden; ",
+          "background-color:#2b2b2b; ",
+          "border:1px solid #444; ",
+          "border-radius:6px; ",
+          "padding:10px;"
+        ),
+        tags$img(
+          src = src,
+          style = "max-width:100%; max-height:100%; object-fit:contain; display:block;"
+        )
+      ),
+      tags$div(
+        label,
+        style = "text-align:center; font-weight:bold; margin-top:10px;"
+      )
+    )
+  )
+}
+
+image_panel_full <- function(src, label, description = NULL, img_height = "420px") {
+  column(
+    width = 12,
+    tags$div(
+      style = "padding: 10px 10px 20px 10px;",
+      if (!is.null(description)) {
+        tags$div(
+          description,
+          style = "margin-bottom:10px; color:#adb5bd; font-size:14px;"
+        )
+      },
+      tags$div(
+        style = paste0(
+          "height:", img_height, "; ",
+          "display:flex; ",
+          "align-items:center; ",
+          "justify-content:center; ",
+          "overflow:hidden; ",
+          "background-color:#2b2b2b; ",
+          "border:1px solid #444; ",
+          "border-radius:6px; ",
+          "padding:10px;"
+        ),
+        tags$img(
+          src = src,
+          style = "max-width:100%; max-height:100%; object-fit:contain; display:block;"
+        )
+      ),
+      tags$div(
+        label,
+        style = "text-align:center; font-weight:bold; margin-top:10px;"
+      )
+    )
+  )
+}
+
+make_expr_summary <- function(df) {
+  df %>%
+    group_by(cluster) %>%
+    summarise(
+      avg_expr = mean(expr),
+      pct_expr = mean(expr > 0) * 100,
+      n = n(),
+      .groups = "drop"
+    )
+}
+
+make_gene_df <- function(expr_mat, selected_gene, common_cells, umap_df) {
+  validate(
+    need(selected_gene %in% rownames(expr_mat), "Selected gene not found in expression matrix.")
+  )
+  
+  expr <- expr_mat[selected_gene, , drop = TRUE]
+  
+  df <- data.frame(
+    cell_id = common_cells,
+    expr = as.numeric(expr),
+    umap_1 = umap_df$umap_1,
+    umap_2 = umap_df$umap_2,
+    cluster = umap_df$cluster,
+    stringsAsFactors = FALSE
+  )
+  
+  df <- df[!is.na(df$expr), , drop = FALSE]
+  df$expr_scaled <- log1p(df$expr)
+  df
+}
+
+cluster_centers <- function(df) {
+  df %>%
+    group_by(cluster) %>%
+    summarise(
+      umap_1 = mean(umap_1, na.rm = TRUE),
+      umap_2 = mean(umap_2, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+make_plot <- function(df, plot_type, color_scale = "Viridis", point_size = 5, show_labels = FALSE) {
+  if (plot_type == "violin") {
+    plot_ly(
+      df,
+      x = ~cluster,
+      y = ~expr,
+      type = "violin",
+      box = list(visible = TRUE),
+      meanline = list(visible = TRUE),
+      points = "none"
+    ) %>%
+      layout(
+        xaxis = list(title = "Cluster"),
+        yaxis = list(title = "Expression")
+      )
+  } else {
+    p <- plot_ly(
+      df,
+      x = ~umap_1,
+      y = ~umap_2,
+      type = "scatter",
+      mode = "markers",
+      marker = list(
+        color = df$expr_scaled,
+        colorscale = color_scale,
+        size = point_size,
+        showscale = TRUE,
+        colorbar = list(title = "log1p(expr)")
+      ),
+      text = ~paste0(
+        "Cell: ", cell_id,
+        "<br>Cluster: ", cluster,
+        "<br>Expr: ", round(expr, 3)
+      ),
+      hoverinfo = "text"
+    ) %>%
+      layout(
+        xaxis = list(title = "UMAP 1"),
+        yaxis = list(title = "UMAP 2")
+      )
+    
+    if (isTRUE(show_labels)) {
+      centers <- cluster_centers(df)
+      
+      p <- p %>%
+        add_text(
+          data = centers,
+          x = ~umap_1,
+          y = ~umap_2,
+          text = ~cluster,
+          textposition = "middle center",
+          textfont = list(size = 14, color = "white"),
+          inherit = FALSE,
+          hoverinfo = "none",
+          showlegend = FALSE
+        )
+    }
+    
+    p
+  }
+}
 
 # ================================
 # UI
 # ================================
 ui <- fluidPage(
-  
   theme = bs_theme(version = 5, bootswatch = "darkly"),
-  
   titlePanel("Cerebral Organoid scRNA-seq Explorer"),
   
   tabsetPanel(
     
-    # ----------------------------
-    # EXISTING TAB: Gene query (original dataset)
-    # ----------------------------
     tabPanel(
-      "Gene Query (Original)",
-      br(),
-      
+      "About",
       fluidRow(
-        
         column(
-          4,
-          card(
-            card_header("Search"),
+          10, offset = 1,
+          tags$div(
+            style = "padding-top: 10px;",
             
-            selectizeInput(
-              "gene",
-              "Gene symbol",
-              choices  = genes,
-              selected = genes[1]
+            tags$h3("About this explorer"),
+            tags$p(
+              "Our application has been developed to aide the visualisation of the cell trajectories & gene expression within 2 cerebral organoid single-cell RNA-seq datasets.",
+              "The variety of tabs enable comparison of cell identity & pattern recognition within both the the cell data produced via a pre & post 2016 analytic pipeline.",
+              "Explanation & conclusions of each visualisation are detailed in the associated SRP Group C Report." ,
+              style = "color: #adb5bd; font-size: 16px; line-height: 1.7;"
             ),
             
-            radioButtons(
-              "plot_type",
-              "Plot type",
-              choices  = c("UMAP" = "umap", "Violin" = "violin"),
-              selected = "umap"
+            section_title("Description"),
+            tags$p(
+              "To make full use of this app, navigate between the Pre & Post 2016 gene query tabs for your chosen gene. Additionally, review the overall cell compositions & tSNE (organoid data only) or Figure 3E to evaluate clustering further.",
+              "To focus on cell lineages & trajectories, explore the Monocle & Figure 3F comparisons.",
+              style = "color: #adb5bd; font-size: 15px; line-height: 1.7;"
             ),
             
-            actionButton("go", "Search")
-          )
-        ),
-        
-        column(
-          8,
-          card(
-            card_header("Results"),
+            section_title("Authors"),
+            tags$div(
+              style = "color: #91c8ff; font-size: 15px; line-height: 1.8;",
+              tags$p("Group C:"),
+              tags$ul(
+                tags$li("Gattab, Asad A.K."),
+                tags$li("Jhyount, Maya K."),
+                tags$li("Patel, Fatima A."),
+                tags$li("Marabathula, Ramarao"),
+                tags$li("Varghese Kodiattu, John")
+              )
+            ),
             
-            fluidRow(
-              
-              column(
-                7,
-                plotOutput("gene_plot", height = "420px")
-              ),
-              
-              column(
-                5,
-                div(
-                  style = "height:420px; overflow-y:auto;",
-                  tableOutput("gene_table")
-                )
+            section_title("How to use"),
+            tags$div(
+              style = "color: #adb5bd; font-size: 15px; line-height: 1.8;",
+              tags$ul(
+                tags$li("Use the Pre-2016 and Post-2016 Gene Query tabs to explore gene expression across the data. Hover over the plot to identify cell name & cluster."),
+                tags$li("Switch between UMAP and violin plots for complementary views of expression."),
+                tags$li("Adjust colour scales, point size, and cluster labels for more interactive UMAP visualisation."),
+                tags$li("Browse the comparison tabs to inspect static figures across datasets.")
               )
             )
           )
@@ -129,361 +390,205 @@ ui <- fluidPage(
       )
     ),
     
-    # ----------------------------
-    # EXISTING TAB: UMAP clusters
-    # ----------------------------
     tabPanel(
-      "UMAP Clusters",
-      plotlyOutput("umap_plot", height = "600px")
-    ),
-    
-    # ----------------------------
-    # EXISTING TAB: t-SNE clusters
-    # ----------------------------
-    tabPanel(
-      "t-SNE Clusters",
-      plotlyOutput("tsne_plot", height = "600px")
-    ),
-    
-    # ----------------------------
-    # NEW TAB 1: Study Comparison — Fig 3D
-    # Shows the two comparison figures from the original paper analysis
-    # TODO: Replace the img src paths with the correct paths to your
-    #       Fig 3D comparison figures once they are saved to the www/ folder.
-    #       Shiny serves static files from a folder called www/ in the same
-    #       directory as app.R. Copy your PNG files there.
-    # ----------------------------
-    tabPanel(
-      "Study Comparison",
-      br(),
-      
-      h4("Comparison of Cell Composition: Fetal Neocortex vs Cerebral Organoids"),
-      p("The figures below show the comparison of single-cell transcriptome 
-        data between human fetal neocortex samples and cerebral organoids, 
-        replicating the analyses from Camp et al. (2015)."),
-      br(),
+      "Pre-2016 Gene Query",
+      tab_description("Explore gene expression in the pre-2016 cerebral organoid dataset using UMAP and violin plots. This data was generated using FactoMineR packages."),
       
       fluidRow(
-        
-        column(
-          6,
-          card(
-            card_header("Fetal Neocortex — Fig 3D"),
-            # TODO: Replace 'placeholder_fig3D_fetal.png' with your actual
-            #       figure filename in the www/ folder
-            tags$img(
-              src   = "placeholder_fig3D_fetal.png",
-              style = "width:100%; height:auto;"
-            ),
-            p("Figure 3D: Cell clustering from fetal neocortex samples.",
-              style = "font-size:0.85em; color:#aaa; margin-top:8px;")
-          )
-        ),
-        
-        column(
-          6,
-          card(
-            card_header("Cerebral Organoids — Fig 3D"),
-            # TODO: Replace 'placeholder_fig3D_organoid.png' with your actual
-            #       figure filename in the www/ folder
-            tags$img(
-              src   = "placeholder_fig3D_organoid.png",
-              style = "width:100%; height:auto;"
-            ),
-            p("Figure 3D: Cell clustering from cerebral organoid samples.",
-              style = "font-size:0.85em; color:#aaa; margin-top:8px;")
-          )
-        )
-      )
-    ),
-    
-    # ----------------------------
-    # NEW TAB 2: Recreated Gene Query
-    # Same layout as the original gene query but uses the recreated dataset
-    # TODO: Uncomment the server section for this tab once the recreated
-    #       RDS files are available (search for "recreated_gene_data" below)
-    # ----------------------------
-    tabPanel(
-      "Gene Query (Recreated)",
-      br(),
-      
-      # Placeholder notice — remove once data is loaded
-      div(
-        class = "alert alert-warning",
-        style = "margin:20px;",
-        strong("Note: "),
-        "This tab requires the recreated dataset RDS files. ",
-        "Once available, uncomment the data loading lines at the top of app.R ",
-        "and the server section labelled 'recreated_gene_data'."
-      ),
-      
-      fluidRow(
-        
         column(
           4,
           card(
             card_header("Search"),
-            
-            # TODO: Change choices to recreated_genes once data is loaded
-            selectizeInput(
-              "recreated_gene",
-              "Gene symbol",
-              choices  = genes,   # TODO: replace with recreated_genes
-              selected = genes[1] # TODO: replace with recreated_genes[1]
-            ),
-            
+            selectizeInput("pre_gene", "Gene", choices = pre_genes),
             radioButtons(
-              "recreated_plot_type",
+              "pre_plot_type",
               "Plot type",
-              choices  = c("UMAP" = "umap", "Violin" = "violin"),
+              choices = c("UMAP" = "umap", "Violin" = "violin"),
               selected = "umap"
             ),
-            
-            actionButton("recreated_go", "Search")
+            selectInput(
+              "pre_color_scale",
+              "UMAP colour scale",
+              choices = c("Viridis", "Cividis", "Plasma", "Inferno", "Magma", "Blues", "Greens", "Reds"),
+              selected = "Viridis"
+            ),
+            sliderInput(
+              "pre_point_size",
+              "UMAP point size",
+              min = 2, max = 10, value = 5, step = 1
+            ),
+            checkboxInput(
+              "pre_show_labels",
+              "Show cluster labels on UMAP",
+              value = FALSE
+            ),
+            actionButton("pre_go", "Search")
           )
         ),
-        
         column(
           8,
           card(
             card_header("Results"),
-            
             fluidRow(
-              
-              column(
-                7,
-                plotOutput("recreated_gene_plot", height = "420px")
-              ),
-              
-              column(
-                5,
-                div(
-                  style = "height:420px; overflow-y:auto;",
-                  tableOutput("recreated_gene_table")
-                )
-              )
+              column(7, plotlyOutput("pre_plot", height = "450px")),
+              column(5, tableOutput("pre_table"))
             )
           )
         )
       )
     ),
     
-    # ----------------------------
-    # NEW TAB 3: STAR Alternative Pipeline Gene Query
-    # Same layout as the original gene query but uses the STAR dataset
-    # TODO: Uncomment the server section for this tab once the STAR
-    #       RDS files are available (search for "star_gene_data" below)
-    # ----------------------------
     tabPanel(
-      "Gene Query (STAR Pipeline)",
-      br(),
-      
-      # Placeholder notice — remove once data is loaded
-      div(
-        class = "alert alert-warning",
-        style = "margin:20px;",
-        strong("Note: "),
-        "This tab requires the STAR alternative pipeline dataset RDS files. ",
-        "Once available, uncomment the data loading lines at the top of app.R ",
-        "and the server section labelled 'star_gene_data'."
-      ),
+      "Post-2016 Gene Query",
+      tab_description("Explore gene expression in the post-2016 cerebral organoid dataset using UMAP and violin plots. This dataset was created using a STAR analysis pipeline."),
       
       fluidRow(
-        
         column(
           4,
           card(
             card_header("Search"),
-            
-            # TODO: Change choices to star_genes once data is loaded
-            selectizeInput(
-              "star_gene",
-              "Gene symbol",
-              choices  = genes,   # TODO: replace with star_genes
-              selected = genes[1] # TODO: replace with star_genes[1]
-            ),
-            
+            selectizeInput("post_gene", "Gene", choices = post_genes),
             radioButtons(
-              "star_plot_type",
+              "post_plot_type",
               "Plot type",
-              choices  = c("UMAP" = "umap", "Violin" = "violin"),
+              choices = c("UMAP" = "umap", "Violin" = "violin"),
               selected = "umap"
             ),
-            
-            actionButton("star_go", "Search")
+            selectInput(
+              "post_color_scale",
+              "UMAP colour scale",
+              choices = c("Viridis", "Cividis", "Plasma", "Inferno", "Magma", "Blues", "Greens", "Reds"),
+              selected = "Viridis"
+            ),
+            sliderInput(
+              "post_point_size",
+              "UMAP point size",
+              min = 2, max = 10, value = 5, step = 1
+            ),
+            checkboxInput(
+              "post_show_labels",
+              "Show cluster labels on UMAP",
+              value = FALSE
+            ),
+            actionButton("post_go", "Search")
           )
         ),
-        
         column(
           8,
           card(
             card_header("Results"),
-            
             fluidRow(
-              
-              column(
-                7,
-                plotOutput("star_gene_plot", height = "420px")
-              ),
-              
-              column(
-                5,
-                div(
-                  style = "height:420px; overflow-y:auto;",
-                  tableOutput("star_gene_table")
-                )
-              )
+              column(7, plotlyOutput("post_plot", height = "450px")),
+              column(5, tableOutput("post_table"))
             )
           )
         )
       )
     ),
     
-    # ----------------------------
-    # NEW TAB 4: Monocle Figure Comparison
-    # Shows all three Monocle trajectory figures as static images
-    # Static images keep the app lightweight — no RDS files needed
-    # TODO: Copy your three Monocle PNG figures to the www/ folder:
-    #         www/Fig2A_final_original_data.png     (Figure 1 — original)
-    #         www/Fig2_recreated_seven_classes.png  (Figure 2 — recreated)
-    #         www/Fig3_STAR_seven_classes.png       (Figure 3 — STAR)
-    # ----------------------------
     tabPanel(
-      "Monocle Trajectories",
-      br(),
-      
-      h4("Pseudotemporal Trajectory Analysis — Comparison Across Pipelines"),
-      p("Monocle 2 was used to reconstruct the apical progenitor (AP) to 
-        basal progenitor (BP) to neuron differentiation lineage across three 
-        datasets. ICA dimensionality reduction was applied and cells were 
-        ordered along a minimum spanning tree."),
-      br(),
+      "Monocle Comparison",
+      tab_description("The figures below show the reconstructed AP-to-BP-to-neuron lineage in the fetal neocortex, using monocle as a tool to order cells along a pseudotemporal path, that matches the cortical zones."),
       
       fluidRow(
-        
-        column(
-          4,
-          card(
-            card_header("Figure 1 — Original GEO Data (Camp et al.)"),
-            tags$img(
-              src   = "Fig2A_final_original_data.png",
-              style = "width:100%; height:auto;"
-            ),
-            p("Monocle 2 trajectory reconstructed from the original GEO 
-              supplementary count data (GSE75140). Seven cell populations 
-              resolved: AP1, AP2, BP1, BP2, N1, N2, N3.",
-              style = "font-size:0.85em; color:#aaa; margin-top:8px;")
-          )
+        image_panel_full(
+          static_img_src("monocle_geo.png"),
+          "Created using the GEO dataset provided by the original Camp et al study.",
+          img_height = "420px"
+        )
+      ),
+      fluidRow(
+        image_panel_half(
+          static_img_src("monocle_pre2016.png"),
+          "Pre-2016 Recreation",
+          img_height = "420px"
         ),
-        
-        column(
-          4,
-          card(
-            card_header("Figure 2 — Recreated Analysis"),
-            tags$img(
-              src   = "Fig2_recreated_seven_classes.png",
-              style = "width:100%; height:auto;"
-            ),
-            p("Monocle 2 trajectory reconstructed from the recreated analysis 
-              dataset. Four cell populations resolved: AP1, AP2, BP1, N1. 
-              Reduced subtype resolution reflects differences in upstream 
-              data processing.",
-              style = "font-size:0.85em; color:#aaa; margin-top:8px;")
-          )
-        ),
-        
-        column(
-          4,
-          card(
-            card_header("Figure 3 — STAR Alternative Pipeline"),
-            tags$img(
-              src   = "Fig3_STAR_seven_classes.png",
-              style = "width:100%; height:auto;"
-            ),
-            p("Monocle 2 trajectory reconstructed from STAR-aligned raw 
-              counts (SRP066834). Five cell populations resolved: AP1, AP2, 
-              BP1, BP2, N1. Raw count data produced lower subtype resolution 
-              than pre-processed FPKM values.",
-              style = "font-size:0.85em; color:#aaa; margin-top:8px;")
-          )
+        image_panel_half(
+          static_img_src("monocle_post2016.png"),
+          "Post-2016 Recreation",
+          img_height = "420px"
         )
       )
     ),
     
-    # ----------------------------
-    # NEW TAB 5: Heatmaps / Alternate Figures
-    # Placeholder tab — add heatmap PNG files to www/ and update img src
-    # TODO: Decide which heatmaps/figures to show here and copy the
-    #       PNG files to the www/ folder, then replace the placeholder
-    #       img tags below with the correct filenames
-    # ----------------------------
+  
     tabPanel(
-      "Heatmaps & Figures",
-      br(),
-      
-      h4("Marker Gene Expression Heatmaps"),
-      p("Heatmaps showing canonical marker gene expression across identified 
-        cell clusters for each analysis pipeline."),
-      br(),
-      
-      # Placeholder notice — remove once figures are ready
-      div(
-        class = "alert alert-info",
-        style = "margin:20px;",
-        strong("Note for group member: "),
-        "Add heatmap PNG files to the www/ folder and replace the ",
-        "placeholder sections below with the correct filenames. ",
-        "Use the same tags$img() format as the Monocle tab above."
-      ),
+      "Fig 3D (tSNE) Comparison",
+      tab_description("The figures below show the clustering formed by the organoid cells in the Pre and Post-2016 datasets. Fetal cell data was filtered out for accurate recreation."),
       
       fluidRow(
-        
-        column(
-          6,
-          card(
-            card_header("Original Dataset — Marker Heatmap"),
-            # TODO: Replace with correct filename
-            # tags$img(src = "Fig1C_style_marker_heatmap.png",
-            #          style = "width:100%; height:auto;")
-            div(
-              style = "height:300px; display:flex; align-items:center; 
-                       justify-content:center; color:#aaa; border:1px dashed #555;",
-              "Heatmap figure placeholder — add PNG to www/ folder"
-            )
-          )
-        ),
-        
-        column(
-          6,
-          card(
-            card_header("STAR Pipeline — Marker Heatmap"),
-            # TODO: Replace with correct filename
-            # tags$img(src = "STAR_Fig1C_style_marker_heatmap.png",
-            #          style = "width:100%; height:auto;")
-            div(
-              style = "height:300px; display:flex; align-items:center; 
-                       justify-content:center; color:#aaa; border:1px dashed #555;",
-              "Heatmap figure placeholder — add PNG to www/ folder"
-            )
-          )
+        image_panel_full(
+          static_img_src("fig3d_geo.png"),
+          "Created using the GEO dataset provided by the original Camp et al study.",,
+          img_height = "420px"
         )
       ),
-      
-      br(),
+      fluidRow(
+        image_panel_half(
+          static_img_src("fig3d_pre2016.png"),
+          "Pre-2016 Recreation",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("fig3d_post2016.png"),
+          "Post-2016 Recreation",
+          img_height = "420px"
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Fig 3E Comparison",
+      tab_description("The figures below identify each cluster by marker-gene expression, showing which clusters correspond to cortex-like cells versus other lineages."),
       
       fluidRow(
-        
-        column(
-          12,
-          card(
-            card_header("Additional Figures"),
-            # TODO: Add any additional figures here
-            div(
-              style = "height:200px; display:flex; align-items:center; 
-                       justify-content:center; color:#aaa; border:1px dashed #555;",
-              "Additional figures placeholder"
-            )
-          )
+        image_panel_half(
+          static_img_src("fig3e_pre2016.png"),
+          "Pre-2016",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("fig3e_post2016.png"),
+          "Post-2016",
+          img_height = "420px"
+        )
+      )
+    ),
+    tabPanel(
+      "Fig 3F Comparison",
+      tab_description("The violin plots below validate the regional identity of the microdissected organoid samples by comparing FOXG1, NEUROD6, and OTX2 expression against fetal cortex, distinguishing dorsal cortex-like regions from ventral forebrain-like ones."),
+      
+      fluidRow(
+        image_panel_half(
+          static_img_src("fig3f_pre2016.png"),
+          "Pre-2016",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("fig3f_post2016.png"),
+          "Post-2016",
+          img_height = "420px"
+        )
+      )
+    ),
+  
+    
+    tabPanel(
+      "Cell Composition Comparison",
+      tab_description("Personalise this description: compare cell type composition between pre-2016 and post-2016 cerebral organoid datasets."),
+      
+      fluidRow(
+        image_panel_half(
+          static_img_src("cellcomp_pre2016.png"),
+          "Pre-2016 Cell Composition",
+          "Add your custom description here for the pre-2016 cell composition panel.",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("cellcomp_post2016.png"),
+          "Post-2016 Cell Composition",
+          "Add your custom description here for the post-2016 cell composition panel.",
+          img_height = "420px"
         )
       )
     )
@@ -495,231 +600,61 @@ ui <- fluidPage(
 # ================================
 server <- function(input, output, session) {
   
-  # ----------------------------
-  # Original dataset — Gene data
-  # ----------------------------
-  gene_data <- eventReactive(input$go, {
-    
-    req(input$gene)
-    
-    g    <- input$gene
-    expr <- expr_mat[g, , drop = TRUE]
-    
-    df <- data.frame(
-      cell_id = colnames(expr_mat),
-      expr    = as.numeric(expr)
+  pre_data <- eventReactive(input$pre_go, {
+    req(input$pre_gene)
+    make_gene_df(
+      expr_mat = pre_expr_mat,
+      selected_gene = input$pre_gene,
+      common_cells = pre_common_cells,
+      umap_df = pre_umap_df
     )
-    
-    idx <- match(df$cell_id, umap_df$cell_id)
-    
-    df$umap_1  <- umap_df$umap_1[idx]
-    df$umap_2  <- umap_df$umap_2[idx]
-    df$cluster <- umap_df$cluster[idx]
-    
-    df <- df[complete.cases(df), ]
-    df
   })
   
-  output$gene_plot <- renderPlot({
-    
-    df <- gene_data()
+  post_data <- eventReactive(input$post_go, {
+    req(input$post_gene)
+    make_gene_df(
+      expr_mat = post_expr_mat,
+      selected_gene = input$post_gene,
+      common_cells = post_common_cells,
+      umap_df = post_umap_df
+    )
+  })
+  
+  output$pre_plot <- renderPlotly({
+    df <- pre_data()
     req(df)
-    
-    g <- input$gene
-    
-    if (input$plot_type == "violin") {
-      
-      ggplot(df, aes(cluster, expr)) +
-        geom_violin(fill = "steelblue", alpha = 0.7) +
-        geom_boxplot(width = 0.15, outlier.size = 0.3) +
-        theme_minimal() +
-        labs(title = paste("Expression of", g),
-             x = "Cluster", y = "Expression")
-      
-    } else {
-      
-      df <- df[order(df$expr), ]
-      
-      ggplot(df, aes(umap_1, umap_2)) +
-        geom_point(aes(color = expr), size = 1.5) +
-        scale_color_viridis_c(option = "magma") +
-        theme_minimal() +
-        labs(title = paste("UMAP:", g), color = "Expression")
-    }
+    make_plot(
+      df = df,
+      plot_type = input$pre_plot_type,
+      color_scale = input$pre_color_scale,
+      point_size = input$pre_point_size,
+      show_labels = input$pre_show_labels
+    )
   })
   
-  output$gene_table <- renderTable({
-    
-    df <- gene_data()
+  output$post_plot <- renderPlotly({
+    df <- post_data()
     req(df)
-    
-    df %>%
-      group_by(cluster) %>%
-      summarise(avg_expr = mean(expr),
-                pct_expr = mean(expr > 0) * 100,
-                n_cells  = n(),
-                .groups  = "drop")
+    make_plot(
+      df = df,
+      plot_type = input$post_plot_type,
+      color_scale = input$post_color_scale,
+      point_size = input$post_point_size,
+      show_labels = input$post_show_labels
+    )
   })
   
-  # ----------------------------
-  # Original dataset — UMAP clusters
-  # ----------------------------
-  output$umap_plot <- renderPlotly({
-    
-    p <- ggplot(umap_df, aes(umap_1, umap_2, color = cluster)) +
-      geom_point(size = 1.5) +
-      theme_minimal()
-    
-    ggplotly(p)
+  output$pre_table <- renderTable({
+    df <- pre_data()
+    req(df)
+    make_expr_summary(df)
   })
   
-  # ----------------------------
-  # Original dataset — t-SNE clusters
-  # ----------------------------
-  output$tsne_plot <- renderPlotly({
-    
-    p <- ggplot(tsne_df, aes(tsne_1, tsne_2, color = cluster)) +
-      geom_point(size = 1.5) +
-      theme_minimal()
-    
-    ggplotly(p)
+  output$post_table <- renderTable({
+    df <- post_data()
+    req(df)
+    make_expr_summary(df)
   })
-  
-  # ----------------------------
-  # Recreated dataset — Gene query
-  # TODO: Uncomment this entire block once recreated_expr_mat and
-  #       recreated_umap_df are loaded at the top of this script
-  # ----------------------------
-  # recreated_gene_data <- eventReactive(input$recreated_go, {
-  #
-  #   req(input$recreated_gene)
-  #
-  #   g    <- input$recreated_gene
-  #   expr <- recreated_expr_mat[g, , drop = TRUE]
-  #
-  #   df <- data.frame(
-  #     cell_id = colnames(recreated_expr_mat),
-  #     expr    = as.numeric(expr)
-  #   )
-  #
-  #   idx <- match(df$cell_id, recreated_umap_df$cell_id)
-  #
-  #   df$umap_1  <- recreated_umap_df$umap_1[idx]
-  #   df$umap_2  <- recreated_umap_df$umap_2[idx]
-  #   df$cluster <- recreated_umap_df$cluster[idx]
-  #
-  #   df <- df[complete.cases(df), ]
-  #   df
-  # })
-  #
-  # output$recreated_gene_plot <- renderPlot({
-  #
-  #   df <- recreated_gene_data()
-  #   req(df)
-  #
-  #   g <- input$recreated_gene
-  #
-  #   if (input$recreated_plot_type == "violin") {
-  #
-  #     ggplot(df, aes(cluster, expr)) +
-  #       geom_violin(fill = "steelblue", alpha = 0.7) +
-  #       geom_boxplot(width = 0.15, outlier.size = 0.3) +
-  #       theme_minimal() +
-  #       labs(title = paste("Expression of", g),
-  #            x = "Cluster", y = "Expression")
-  #
-  #   } else {
-  #
-  #     df <- df[order(df$expr), ]
-  #
-  #     ggplot(df, aes(umap_1, umap_2)) +
-  #       geom_point(aes(color = expr), size = 1.5) +
-  #       scale_color_viridis_c(option = "magma") +
-  #       theme_minimal() +
-  #       labs(title = paste("UMAP:", g), color = "Expression")
-  #   }
-  # })
-  #
-  # output$recreated_gene_table <- renderTable({
-  #
-  #   df <- recreated_gene_data()
-  #   req(df)
-  #
-  #   df %>%
-  #     group_by(cluster) %>%
-  #     summarise(avg_expr = mean(expr),
-  #               pct_expr = mean(expr > 0) * 100,
-  #               n_cells  = n(),
-  #               .groups  = "drop")
-  # })
-  
-  # ----------------------------
-  # STAR pipeline dataset — Gene query
-  # TODO: Uncomment this entire block once star_expr_mat and
-  #       star_umap_df are loaded at the top of this script
-  # ----------------------------
-  # star_gene_data <- eventReactive(input$star_go, {
-  #
-  #   req(input$star_gene)
-  #
-  #   g    <- input$star_gene
-  #   expr <- star_expr_mat[g, , drop = TRUE]
-  #
-  #   df <- data.frame(
-  #     cell_id = colnames(star_expr_mat),
-  #     expr    = as.numeric(expr)
-  #   )
-  #
-  #   idx <- match(df$cell_id, star_umap_df$cell_id)
-  #
-  #   df$umap_1  <- star_umap_df$umap_1[idx]
-  #   df$umap_2  <- star_umap_df$umap_2[idx]
-  #   df$cluster <- star_umap_df$cluster[idx]
-  #
-  #   df <- df[complete.cases(df), ]
-  #   df
-  # })
-  #
-  # output$star_gene_plot <- renderPlot({
-  #
-  #   df <- star_gene_data()
-  #   req(df)
-  #
-  #   g <- input$star_gene
-  #
-  #   if (input$star_plot_type == "violin") {
-  #
-  #     ggplot(df, aes(cluster, expr)) +
-  #       geom_violin(fill = "steelblue", alpha = 0.7) +
-  #       geom_boxplot(width = 0.15, outlier.size = 0.3) +
-  #       theme_minimal() +
-  #       labs(title = paste("Expression of", g),
-  #            x = "Cluster", y = "Expression")
-  #
-  #   } else {
-  #
-  #     df <- df[order(df$expr), ]
-  #
-  #     ggplot(df, aes(umap_1, umap_2)) +
-  #       geom_point(aes(color = expr), size = 1.5) +
-  #       scale_color_viridis_c(option = "magma") +
-  #       theme_minimal() +
-  #       labs(title = paste("UMAP:", g), color = "Expression")
-  #   }
-  # })
-  #
-  # output$star_gene_table <- renderTable({
-  #
-  #   df <- star_gene_data()
-  #   req(df)
-  #
-  #   df %>%
-  #     group_by(cluster) %>%
-  #     summarise(avg_expr = mean(expr),
-  #               pct_expr = mean(expr > 0) * 100,
-  #               n_cells  = n(),
-  #               .groups  = "drop")
-  # })
 }
 
 # ================================
