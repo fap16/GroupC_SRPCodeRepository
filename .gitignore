@@ -5,3 +5,6 @@ logs/
 *.fastq
 *.sam
 *.bam
+.Rproj.user/
+.Rhistory
+.RData
