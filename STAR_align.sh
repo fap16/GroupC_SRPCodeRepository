@@ -10,39 +10,33 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=aakg1@student.le.ac.uk
 
-
 # Load modules
 module load star/2.7.11a-5kstrrw
 module load samtools/1.17-wenuvv5
 
-# paths
-GENOME_DIR="/scratch/alice/a/aakg1/genome_files/star_index" #insert own pathways here
-FASTQ_DIR="/scratch/alice/a/aakg1/SRA_project/fastq"
-OUT_DIR="/scratch/alice/a/aakg1/SRA_project/alignment_results"
+# paths/use own paths
+#GENOME_DIR="/scratch/alice/a/aakg1/genome_files/star_index" #insert own pathways here
+#FASTQ_DIR="/scratch/alice/a/aakg1/SRA_project/fastq"
+#OUT_DIR="/scratch/alice/a/aakg1/SRA_project/alignment_results"
 
 mkdir -p $OUT_DIR
 
 # Loop  all R1 files
 for R1 in ${FASTQ_DIR}/*_1.fastq.gz; do
-
- # identify 2nd pair
-
-    R2=${R1/_1.fastq.gz/_2.fastq.gz}
-
- # base naming
-
-    SAMPLE=$(basename $R1 _1.fastq.gz)
-
+# identify 2nd pair
+R2=${R1/_1.fastq.gz/_2.fastq.gz}
+# base naming
+SAMPLE=$(basename $R1 _1.fastq.gz)
  # 4. Run STAR alignment using genome index
     STAR --runThreadN 16 \
          --genomeDir $GENOME_DIR \
          --readFilesIn $R1 $R2 \
          --readFilesCommand zcat \
          --outFileNamePrefix ${OUT_DIR}/${SAMPLE}_ \
-         --outSAMtype BAM SortedByCoordinate \
+         --outSAMtype BAM SortedByCoordinate \ #setting the parameters
          --quantMode GeneCounts \
          --outSAMunmapped Within \
-         --limitBAMsortRAM 30000000000
+         --limitBAMsortRAM 30000000000 #indicates how much memory allowed to use in RAM
 
  # 5. Index the BAM
     samtools index ${OUT_DIR}/${SAMPLE}_Aligned.sortedByCoord.out.bam
