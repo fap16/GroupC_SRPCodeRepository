@@ -7,8 +7,8 @@
 #SBATCH --mem=24G
 #SBATCH --time=48:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --output=/scratch/alice/j/jvk3/SRA_project/logs/sra_to_fastq.out
-#SBATCH --error=/scratch/alice/j/jvk3/SRA_project/logs/sra_to_fastq.err
+#SBATCH --output=/scratch/alice/j/jvk3/camp_alice/logs/sra_to_fastq.out
+#SBATCH --error=/scratch/alice/j/jvk3/camp_alice/logs/sra_to_fastq.err
 #SBATCH --export=NONE
 
 # Load SRA toolkit
@@ -16,7 +16,7 @@ module load sratoolkit/3.0.0-5fetwpi
 
 # Assigning directories for use/can set your own
 
-#PROJ="/scratch/alice/a/aakg1/SRA_project"
+#PROJ="/scratch/alice/j/jvk3/camp_alice"
 #ACC_LIST="${PROJ}/SRR_Acc_List.txt"
 #SRA_DIR="${PROJ}/sra"
 #FASTQ_DIR="${PROJ}/fastq"
