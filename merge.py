@@ -50,4 +50,4 @@ final_matrix = final_matrix.fillna(0)
 
 # 6. Save the final matrix
 final_matrix.to_csv(output)
-print(f"SUCCESS! Matrix saved to: {output}")
+print(f"Matrix saved to: {output}")
