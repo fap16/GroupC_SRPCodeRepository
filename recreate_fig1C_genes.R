@@ -1,4 +1,6 @@
-# recreation of Fig 1C-style clustering and classification genes
+### Recreation of Fig 1C-style clustering using Seurat, with marker-based cluster labelling and PC loading gene extraction for monocle ordering
+### This script is for recreation of figure 2A from the paper using the original dataset
+
 
 suppressPackageStartupMessages({
   library(Seurat)
@@ -44,7 +46,7 @@ if (anyNA(expr_matrix)) {
   expr_matrix[is.na(expr_matrix)] <- 0
 }
 
-# Seurat expects genes x cells
+# Seurat expects genes x cells, therefore ensuring rows and columns are correctly assigned
 expr_matrix <- t(expr_matrix)
 
 message("Creating Seurat object...")
@@ -68,7 +70,6 @@ seu <- RunPCA(seu, features = VariableFeatures(seu), npcs = 20, verbose = FALSE)
 message("Clustering...")
 seu <- FindNeighbors(seu, dims = 1:10)
 
-# Adjust this if needed; 0.50 often gives ~7 clusters on this dataset
 seu <- FindClusters(seu, resolution = 0.50)
 
 png("figures/Fig1C_style_PCA_clusters.png", width = 7, height = 5, units = "in", res = 300)
@@ -91,7 +92,7 @@ markers <- FindAllMarkers(
 
 write.csv(markers, "outputs/fig1C_cluster_markers_all.csv", row.names = FALSE)
 
-# Use top 40 markers per cluster to get a stronger classification gene set
+# Using top 40 markers per cluster to get a stronger classification gene set
 top_markers <- markers %>%
   group_by(cluster) %>%
   arrange(desc(avg_log2FC), .by_group = TRUE) %>%
@@ -112,27 +113,14 @@ canonical_markers <- c(
 
 present_markers <- canonical_markers[canonical_markers %in% rownames(seu)]
 
-# Scale again including these markers so heatmap does not omit them
+# Scaling again including these markers so heatmap does not omit them
 seu <- ScaleData(seu, features = unique(c(VariableFeatures(seu), present_markers)))
-
-if (length(present_markers) > 0) {
-  png("figures/Fig1C_style_marker_heatmap.png", width = 10, height = 6, units = "in", res = 300)
-  print(
-    DoHeatmap(seu, features = present_markers, group.by = "seurat_clusters") +
-      NoLegend()
-  )
-  dev.off()
-}
 
 avg_expr <- AverageExpression(seu, features = present_markers, assays = "RNA", layer = "data")$RNA
 write.csv(avg_expr, "outputs/fig1C_cluster_average_expression.csv")
 
 saveRDS(seu, "outputs/fig1C_seurat_object.rds")
 
-message("DONE ✅")
-message("Saved:")
-message(" - figures/Fig1C_style_PCA_clusters.png")
-message(" - figures/Fig1C_style_marker_heatmap.png")
 message(" - outputs/fig1C_cluster_markers_all.csv")
 message(" - outputs/fig1C_cluster_markers_top40.csv")
 message(" - outputs/fig1C_classification_genes.rds")

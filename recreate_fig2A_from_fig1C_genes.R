@@ -1,5 +1,6 @@
-# Recreate Fig 2A using recreated Fig 1C classification genes AND 7 Fig 1C clusters
+### Recreate Fig 2A using recreated Fig 1C classification genes AND 7 Fig 1C clusters
 
+## Importing required packages
 suppressPackageStartupMessages({
   library(monocle)
   library(Matrix)
@@ -7,9 +8,7 @@ suppressPackageStartupMessages({
   library(ggplot2)
 })
 
-# ----------------------------
-# 0) Input / output
-# ----------------------------
+## Assigning required input and output files
 infile <- "GSE75140_hOrg.fetal.master.data.frame.txt.gz"
 gene_file <- "outputs/fig1C_classification_genes.rds"
 cluster_file <- "outputs/fig1C_cell_clusters.csv"
@@ -21,9 +20,7 @@ if (!file.exists(cluster_file)) stop("Missing file: ", normalizePath(cluster_fil
 if (!dir.exists("figures")) dir.create("figures")
 if (!dir.exists("outputs")) dir.create("outputs")
 
-# ----------------------------
-# 1) Load GEO matrix
-# ----------------------------
+# Loading in the original data GEO file matrix
 message("Reading GEO matrix...")
 raw_df <- read.table(
   gzfile(infile),
@@ -48,7 +45,7 @@ expr_matrix <- data.matrix(raw_df[, -1])
 rownames(expr_matrix) <- cell_ids
 colnames(expr_matrix) <- gene_cols
 
-expr_matrix <- t(expr_matrix)  # genes x cells
+expr_matrix <- t(expr_matrix)  # genes x cells - assigning data to rows and columns
 
 if (anyNA(expr_matrix)) {
   warning("NAs detected in matrix; replacing with 0.")
@@ -58,9 +55,7 @@ if (anyNA(expr_matrix)) {
 expr_matrix <- as(expr_matrix, "dgCMatrix")
 rm(raw_df)
 
-# ----------------------------
-# 2) Build Monocle CellDataSet
-# ----------------------------
+## Building the Monocle dataset for trajectory analysis and figure recreation of the original Figure 2A. 
 message("Creating Monocle CellDataSet...")
 pd_df <- data.frame(
   cell_id = colnames(expr_matrix),
@@ -89,9 +84,7 @@ cds <- estimateDispersions(cds)
 
 available_genes <- rownames(exprs(cds))
 
-# ----------------------------
-# 3) Robust gene resolver
-# ----------------------------
+## Generating a robust gene resolver
 resolve_one <- function(g, available) {
   g_clean <- toupper(trimws(gsub('^"|"$', "", gsub("\\.+$", "", sub("^X\\.", "", g)))))
   avail_clean <- toupper(trimws(gsub('^"|"$', "", gsub("\\.+$", "", sub("^X\\.", "", available)))))
@@ -109,9 +102,7 @@ resolve_genes <- function(gene_vec, available) {
   unique(out)
 }
 
-# ----------------------------
-# 4) Load recreated Fig 1C classification genes
-# ----------------------------
+## loading recreated Fig 1C classification genes 
 classification_genes_raw <- readRDS(gene_file)
 classification_genes <- resolve_genes(classification_genes_raw, available_genes)
 classification_genes <- classification_genes[!is.na(classification_genes)]
@@ -122,190 +113,181 @@ if (length(classification_genes) < 20) {
   stop("Too few classification genes survived matching.")
 }
 
-# ----------------------------
-# 5) Load Fig 1C cluster assignments
-# ----------------------------
+## Loading Fig 1C cluster assignments based on classification genes
+
 cluster_map <- read.csv(cluster_file, stringsAsFactors = FALSE)
 rownames(cluster_map) <- cluster_map$cell_id
 
 pData(cds)$fig1c_cluster <- cluster_map[colnames(exprs(cds)), "fig1c_cluster"]
 
-# Keep as factor with 7 levels if present
 cluster_levels <- sort(unique(na.omit(pData(cds)$fig1c_cluster)))
 pData(cds)$fig1c_cluster <- factor(pData(cds)$fig1c_cluster, levels = cluster_levels)
 
 message("Fig 1C clusters loaded:")
 print(table(pData(cds)$fig1c_cluster, useNA = "ifany"))
 
-# ----------------------------
-# 6) Broad AP / BP / N labels for filtering only
-# ----------------------------
-ap_markers <- c("PAX6", "GLI3", "SOX2", "HES1", "VIM", "PROM1")
-bp_markers <- c("EOMES", "INSM1", "HES6", "ASPM", "NEUROD4")
-n_markers  <- c("MYT1L", "TBR1", "BCL11B", "NEUROD6")
-exclude_markers <- c("PECAM1", "GAD1", "DLX1", "DLX2", "DLX5", "DLX6", "ERBB4")
+## Filtering to identify fetal cells and attaching labels
 
-ap_m <- resolve_genes(ap_markers, available_genes)
-bp_m <- resolve_genes(bp_markers, available_genes)
-n_m  <- resolve_genes(n_markers, available_genes)
-ex_m <- resolve_genes(exclude_markers, available_genes)
+# Striping quotes from cluster_map
+cluster_map$cell_id <- gsub('^"|"$', "", cluster_map$cell_id)
 
-expr_log <- log1p(exprs(cds))
+# Striping quotes from cds cell IDs via the assay slot
+clean_ids <- gsub('^"|"$', "", colnames(exprs(cds)))
+cds@assayData$exprs@Dimnames[[2]] <- clean_ids
+rownames(pData(cds)) <- clean_ids
+pData(cds)$cell_id  <- clean_ids
 
-score_set <- function(gset) {
-  if (length(gset) == 0) {
-    out <- rep(0, ncol(expr_log))
-    names(out) <- colnames(expr_log)
-    return(out)
-  }
-  out <- Matrix::colMeans(expr_log[gset, , drop = FALSE])
-  names(out) <- colnames(expr_log)
-  out
-}
+# Syncing protocolData with cleaned cell IDs
+pd_clean <- pData(cds)
+proto    <- new("AnnotatedDataFrame",
+                data = data.frame(row.names = rownames(pd_clean),
+                                  labelDescription = rep(NA, nrow(pd_clean))))
+protocolData(cds) <- proto
 
-ap_score <- score_set(ap_m)
-bp_score <- score_set(bp_m)
-n_score  <- score_set(n_m)
-ex_score <- score_set(ex_m)
+# Filtering to fetal cells using cluster_map cell IDs directly
+keep_in_matrix <- intersect(cluster_map$cell_id, colnames(exprs(cds)))
+message("Fetal cells matched: ", length(keep_in_matrix))
+cds2 <- cds[, keep_in_matrix]
 
-lineage_score <- pmax(ap_score, bp_score, n_score)
+# Attaching paper_class labels
+rownames(cluster_map) <- cluster_map$cell_id
+pData(cds2)$paper_class <- cluster_map[colnames(exprs(cds2)), "paper_class"]
 
-# Slightly stricter filter
-lineage_thr <- as.numeric(quantile(lineage_score, 0.30))
-exclude_thr <- if (length(ex_m) > 0) as.numeric(quantile(ex_score, 0.85)) else Inf
+# Adding broad class
+broad_map <- c(AP1="AP", AP2="AP", BP1="BP", BP2="BP", N1="N", N2="N", N3="N")
+pData(cds2)$cell_class <- broad_map[pData(cds2)$paper_class]
 
-keep_cells <- names(lineage_score)[lineage_score >= lineage_thr & ex_score <= exclude_thr]
+# Setting factor levels
+pData(cds2)$paper_class <- factor(pData(cds2)$paper_class,
+                                  levels = c("AP1","AP2","BP1","BP2","N1","N2","N3"))
+pData(cds2)$cell_class <- factor(pData(cds2)$cell_class,
+                                 levels = c("AP","BP","N"))
 
-if (length(keep_cells) < 150) {
-  message("Relaxing filter thresholds...")
-  lineage_thr <- as.numeric(quantile(lineage_score, 0.20))
-  exclude_thr <- if (length(ex_m) > 0) as.numeric(quantile(ex_score, 0.90)) else Inf
-  keep_cells <- names(lineage_score)[lineage_score >= lineage_thr & ex_score <= exclude_thr]
-}
-
-if (length(keep_cells) < 50) {
-  message("Too few cells retained; keeping all cells instead.")
-  keep_cells <- colnames(exprs(cds))
-}
-
-message("Keeping ", length(keep_cells), " cells out of ", ncol(exprs(cds)))
-
-cds2 <- cds[, keep_cells]
-pData(cds2)$fig1c_cluster <- pData(cds)$fig1c_cluster[colnames(exprs(cds2))]
-
-# ----------------------------
-# 7) Rename the 7 clusters to paper-like labels
-# ----------------------------
-cluster_ids <- sort(unique(as.character(pData(cds2)$fig1c_cluster)))
-print(cluster_ids)
-
-# EDIT THIS if needed after seeing printed cluster_ids
-cluster_to_paper <- setNames(
-  c("AP1", "AP2", "BP1", "BP2", "N1", "N2", "N3")[seq_along(cluster_ids)],
-  cluster_ids
-)
-
-print(cluster_to_paper)
-
-pData(cds2)$paper_class <- unname(cluster_to_paper[as.character(pData(cds2)$fig1c_cluster)])
-
-pData(cds2)$paper_class <- factor(
-  pData(cds2)$paper_class,
-  levels = c("AP1", "AP2", "BP1", "BP2", "N1", "N2", "N3")
-)
-
+message("Cells per paper class:")
 print(table(pData(cds2)$paper_class, useNA = "ifany"))
+message("Cells per broad class:")
+print(table(pData(cds2)$cell_class, useNA = "ifany"))
 
-# ----------------------------
-# 8) Use recreated Fig 1C genes as ordering genes
-# ----------------------------
-ordering_genes <- classification_genes[classification_genes %in% rownames(exprs(cds2))]
+## Removing unlabelled cells
+
+labelled_cells <- colnames(exprs(cds2))[!is.na(pData(cds2)$paper_class)]
+cds2 <- cds2[, labelled_cells]
+message("Cells after removing unlabelled: ", ncol(exprs(cds2)))
+
+## Setting ordering genes by using marker-based genes for ordering to provide an ideal trajectory shape
+# PC loading genes are saved as a fallback but identified marker genes produce an ICA space that is closer to original paper
+
+# Loading marker genes from Fig1C script output
+marker_genes_df <- read.csv("outputs/fig1C_cluster_markers_top40.csv",
+                            stringsAsFactors = FALSE)
+ordering_genes_markers <- unique(marker_genes_df$gene)
+ordering_genes <- ordering_genes_markers[ordering_genes_markers %in% 
+                                           rownames(exprs(cds2))]
+
+message("Marker-based ordering genes matched: ", length(ordering_genes))
+
+# Fallback to PC genes if markers insufficient
+if (length(ordering_genes) < 20) {
+  message("Falling back to PC loading genes...")
+  pc_genes_raw   <- readRDS(gene_file)
+  ordering_genes <- pc_genes_raw[pc_genes_raw %in% rownames(exprs(cds2))]
+  message("PC ordering genes matched: ", length(ordering_genes))
+}
 
 if (length(ordering_genes) < 20) {
   stop("Too few ordering genes remain after subsetting.")
 }
 
-message("Ordering genes used: ", length(ordering_genes))
 cds2 <- setOrderingFilter(cds2, ordering_genes)
 
-# ----------------------------
-# 9) Patch Monocle2 / igraph compatibility
-# ----------------------------
+## Generating igraph compatibility patch
+
 orig_dfs <- get("dfs", envir = asNamespace("igraph"))
-
-patched_dfs <- function(graph, root, mode = c("out", "in", "all", "total"),
-                        neimode = mode,
-                        unreachable = TRUE, order = TRUE, order.out = FALSE,
-                        father = FALSE, parent = father, dist = FALSE,
-                        in.callback = NULL, out.callback = NULL,
-                        extra = NULL, rho = parent.frame(), ...) {
-  mode <- if (!missing(neimode)) neimode else mode
-  parent <- if (!missing(father)) father else parent
-  
-  orig_dfs(
-    graph = graph,
-    root = root,
-    mode = mode,
-    unreachable = unreachable,
-    order = order,
-    order.out = order.out,
-    parent = parent,
-    dist = dist,
-    in.callback = in.callback,
-    out.callback = out.callback,
-    extra = extra,
-    rho = rho,
-    ...
-  )
+patched_dfs <- function(graph, root,
+                        mode = c("out","in","all","total"),
+                        neimode = mode, unreachable = TRUE,
+                        order = TRUE, order.out = FALSE,
+                        father = FALSE, parent = father,
+                        dist = FALSE, in.callback = NULL,
+                        out.callback = NULL, extra = NULL,
+                        rho = parent.frame(), ...) {
+  mode   <- if (!missing(neimode)) neimode else mode
+  parent <- if (!missing(father))  father  else parent
+  orig_dfs(graph=graph, root=root, mode=mode, unreachable=unreachable,
+           order=order, order.out=order.out, parent=parent, dist=dist,
+           in.callback=in.callback, out.callback=out.callback,
+           extra=extra, rho=rho, ...)
 }
-
 unlockBinding("dfs", asNamespace("igraph"))
 assign("dfs", patched_dfs, envir = asNamespace("igraph"))
 lockBinding("dfs", asNamespace("igraph"))
 
-# ----------------------------
-# 10) ICA + orderCells
-# ----------------------------
+## Performing ICA and orderCells
+# orderCells assigns pseudotime values to each cell by traversing
+# the minimum spanning tree from the root state outward.
+# tryCatch prevents the script from stopping if a stack overflow occurs.
+
 set.seed(42)
 cds2 <- reduceDimension(cds2, method = "ICA", max_components = 2)
+message("reduceDimension complete")
 
 cds2 <- tryCatch(
-  {
-    orderCells(cds2)
-  },
+  orderCells(cds2),
   error = function(e) {
-    message("orderCells() failed; continuing with reduceDimension() output.")
-    message("Original error: ", conditionMessage(e))
+    message("orderCells() failed: ", conditionMessage(e))
     cds2
   }
 )
 
-message("Paper-like classes:")
+# Re-rooting at the state most enriched for AP cells
+if ("State" %in% colnames(pData(cds2))) {
+  state_tab  <- table(pData(cds2)$State, pData(cds2)$cell_class)
+  
+  if ("AP" %in% colnames(state_tab)) {
+    ap_prop    <- state_tab[, "AP"] / rowSums(state_tab)
+    root_state <- names(which.max(ap_prop))
+    message("Re-rooting at state ", root_state)
+    cds2 <- orderCells(cds2, root_state = root_state)
+  }
+}
+
+message("Pseudotime assigned: ", "Pseudotime" %in% colnames(pData(cds2)))
 print(table(pData(cds2)$paper_class, useNA = "ifany"))
 
-# ----------------------------
-# 11) Save Fig 2A with 7 classes
-# ----------------------------
-p <- plot_cell_trajectory(cds2, color_by = "paper_class") +
-  scale_color_manual(
-    values = c(
-      "AP1" = "#5F8F4A",
-      "AP2" = "#9BC67E",
-      "BP1" = "#7DC9C9",
-      "BP2" = "#BFE6E6",
-      "N1"  = "#9DB8E6",
-      "N2"  = "#5F86C9",
-      "N3"  = "#2E4E9B"
-    ),
-    na.value = "grey70",
-    drop = FALSE
-  ) +
-  ggtitle("Fig 2A recreated using Fig 1C-derived classification genes")
+## Saving the figures
 
-png("figures/Fig2A_from_recreated_Fig1C_clusters1.png", width = 7, height = 5, units = "in", res = 300)
+# Broad AP/BP/N plot (closest to paper Fig 2A)
+p <- plot_cell_trajectory(cds2, color_by = "cell_class") +
+  scale_color_manual(
+    values = c("AP" = "#5F8F4A", "BP" = "#7DC9C9", "N" = "#2E4E9B"),
+    na.value = "grey70",
+    name = "Cell class"
+  ) +
+  ggtitle("Fig 2A — AP/BP/Neuron lineage (recreated)")
+
+png("figures/Fig2A_broad_classes.png", width = 7, height = 5,
+    units = "in", res = 300)
 print(p)
 dev.off()
+message("Saved figures/Fig2A_broad_classes.png")
 
-message("Saved figures/Fig2A_from_recreated_Fig1C_clusters1.png")
-message("Saved outputs/monocle_cds_fig2A_from_fig1C_clusters.rds")
-message("DONE ✅")
+# 7-subtype version
+p7 <- plot_cell_trajectory(cds2, color_by = "paper_class") +
+  scale_color_manual(
+    values = c(
+      "AP1" = "#5F8F4A", "AP2" = "#9BC67E",
+      "BP1" = "#7DC9C9", "BP2" = "#BFE6E6",
+      "N1"  = "#9DB8E6", "N2"  = "#5F86C9", "N3" = "#2E4E9B"
+    ),
+    na.value = "grey70",
+    name = "Cell type"
+  ) +
+  ggtitle("Monocle trajectory — fetal neocortex (Camp et al. data)") +
+  xlab("Component 1") + ylab("Component 2") +
+  theme_classic(base_size = 12)
+
+png("figures/Fig2A_final_original_data.png", width = 7, height = 5,
+    units = "in", res = 300)
+print(p7)
+dev.off()
+message("Saved figures/Fig2A_final_original_data.png")
