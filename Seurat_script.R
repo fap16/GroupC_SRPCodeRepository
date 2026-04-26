@@ -1,16 +1,16 @@
 #seurat object creation script to recreate figures from camp et al. 2015
-# 21/04/2026 AKG last update
+# 26/04/2026 AKG last update
 
 #used to start fresh
 #rm(list = ls())
 #graphics.off()
 
 # Load libraries
-library(Seurat)
-library(ggplot2)
-library(dplyr)
-library(org.Hs.eg.db)
-library(AnnotationDbi)
+#library(Seurat)
+#library(ggplot2)
+#library(dplyr)
+#library(org.Hs.eg.db)
+#library(AnnotationDbi)
 
 # setting working directory(different for each user)
 #setwd("~/steered_research_project")
@@ -36,29 +36,31 @@ seurat_obj <- CreateSeuratObject(
   counts = counts,
   project = "Post2016_UMAP",
   min.cells = 3,
-  min.features = 0
+  min.features = 200 #removes low-quality cells
 )
 #Quality control plots to show spread of data
 VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
 
-# quality control filterinng
+# quality control filtering
 seurat_obj <- NormalizeData(seurat_obj)
-seurat_obj <- FindVariableFeatures(seurat_obj, nfeatures = 500)
+seurat_obj <- FindVariableFeatures(seurat_obj, nfeatures = 2000)
 seurat_obj <- ScaleData(seurat_obj)
 
 # running PCA
 seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(seurat_obj))
-#elbow plot of pca for standard devation
-ElbowPlot(seurat_obj)
-DimPlot(seurat_obj, reduction = "pca")
+#elbow plot of PCA for standard devation
+ElbowPlot(seurat_obj) #to determine optimal number of clusters (8 in this case)
+DimPlot(seurat_obj, reduction = "pca") #calculate and display Principal components
+
+
 
 # create clustering
 
-seurat_obj <- FindNeighbors(seurat_obj, dims = 1:10)
+seurat_obj <- FindNeighbors(seurat_obj, dims = 1:15) #find neighbour
 seurat_obj <- FindClusters(seurat_obj, resolution = 0.5)
 
 #UMAP figure creation
-seurat_obj <- RunUMAP(seurat_obj, dims = 1:10)
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:15)
 
 plot_umap <- DimPlot(
   seurat_obj,
@@ -70,13 +72,13 @@ plot_umap <- DimPlot(
 
 plot_umap
 
-# workflow ofr gene id to gene naming using bioconductor
+# workflow of gene id to gene naming using biomrt package
 
 markers <- FindAllMarkers(seurat_obj, only.pos = TRUE)
 
 top_markers <- markers %>%
   group_by(cluster) %>%
-  slice_max(avg_log2FC, n = 10)
+  slice_max(avg_log2FC, n = 15) #mark top 15 markers in each cluster
 
 print(top_markers)
 
@@ -88,7 +90,7 @@ gene_symbols <- mapIds(
   keytype = "ENSEMBL", #ensembl database
   multiVals = "first"
 )
-#input new gene symbols in valid genes with top 10 markers
+#keep genes that successfully map from Ensembl,IDs to gene symbols
 valid_genes <- !is.na(gene_symbols)
 #create new value to use 
 seurat_obj <- subset(seurat_obj, features = names(gene_symbols[valid_genes]))
@@ -102,14 +104,14 @@ markers <- FindAllMarkers(seurat_obj, only.pos = TRUE)
 
 top_markers <- markers %>%
   group_by(cluster) %>%
-  slice_max(avg_log2FC, n = 10)
+  slice_max(avg_log2FC, n = 15) 
 
 print(top_markers)
 
 plotted_umap_symbols <- DimPlot(
   seurat_obj,
   reduction = "umap",
-  group.by = "seurat_clusters", #metadata clasters from seurat used
+  group.by = "seurat_clusters", #metadata clusters from seurat used
   label = TRUE,
   repel = TRUE,
   pt.size = 0.6
@@ -120,14 +122,14 @@ plotted_umap_symbols
 
 seurat_obj <- RenameIdents(
   seurat_obj,
-  "0" = "Interneurons",
-  "1" = "Cortical neurons",
-  "2" = "Radial Glia cells",
-  "3" = "Cycling apical Progenitors",
-  "4" = "Newborn neurons " ,
-  "5" = "Intermediate neurons " ,
-  "6" = "Ventral forebrain Neurons" , 
-  "7" = "Mesenchymal cells" 
+  "0" = "Early NPCs and Vental forebrain NPCs",
+  "1" = "Cerebral cortex MN ",
+  "2" = "Dorsal forebrain MCN",
+  "3" = "Dorsal forebrain DN",
+  "4" = "Dorsal Forerbain NPCs " ,
+  "5" = "Mesenchymal cells Non-Cycling " ,
+  "6" = "Mesenchymal cells Cycling" , 
+  "7" = "Non-neural" 
 )
 #group new cluster names in cell type
 seurat_obj$celltype <- Idents((seurat_obj))
@@ -140,16 +142,17 @@ plotted_umap_symbols <- DimPlot(
   label = TRUE,
   repel = TRUE,
   pt.size = 0.6
-) + ggtitle("Post 2016 figure 3d Recreation")
+) + ggtitle("Post 2016 Figure 3D Recreation")
 
 plotted_umap_symbols
-#figure 3e creation based off significant features
+#figure 3e creation based off top 15 significant features
 FeaturePlot(
   seurat_obj,
-  features = c("FOXG1", "NFIA", "NFIB", "NEUROD6", "OTX2", "RSPO2", "WNT2B"),
+  features = c("FOXG1", "ASPM", "LIN28A", "NEUROD6", "OTX2", "RSPO2", "MYT1L" , "DCN"),
   reduction = "umap",
-  ncol = 3,
+  ncol = 4,
   order = TRUE
 )
 #violin plot displaying marker genes for clusters
+#Figure 3F generation
 VlnPlot(seurat_obj, features = c("FOXG1", "NEUROD6", "OTX2"), group.by = "celltype")
