@@ -1,0 +1,146 @@
+#POST 2016 TSNE GENERATION
+
+
+#prep
+setwd("/home/fap16/steered_research_project/r_shiny/matrixes")
+
+library(Seurat)
+library(FactoMineR)
+library(tidyverse)
+library(stringr)
+
+set.seed(42)
+
+#1. import data
+a_data <- read.csv("asads_counts_with_stage_names.csv", row.names = 1)
+
+#convert to matrix (prevent break)
+a_matrix <- as.matrix(a_data)
+# ================================
+# 2. Create Seurat object 
+
+organoid1 <- CreateSeuratObject(
+  counts = a_matrix,
+  project = "Camp_Replication",
+  min.cells = 3,
+  min.features = 200
+)
+
+# ================================
+# 3. Filter cells (FIXED)
+# ================================
+organoid1_cells1 <- grep(
+  "_(33|35|37|41|65|53|58)$",
+  colnames(organoid1),
+  value = TRUE
+)
+
+#subset
+organoid1 <- subset(organoid1, cells = organoid1_cells1)
+
+#extraction 
+cells <- Cells(organoid1)
+
+
+organoid1$stage <- str_extract(cells, "(?<=_)\\d+")
+organoid1$stage <- paste0(organoid1$stage, "d")
+
+
+# ================================
+# 5. Standard preprocessing
+# ================================
+organoid1 <- NormalizeData(organoid1)
+organoid1 <- FindVariableFeatures(organoid1, selection.method = "vst", nfeatures = 2000)
+organoid1 <- ScaleData(organoid1)
+
+# ================================
+# 6. PCA (ONLY on selected cells)
+# ================================
+organoid1  <- RunPCA(
+  organoid1,
+  features = VariableFeatures(organoid1),
+  npcs = 30
+)
+
+ElbowPlot(organoid1)
+
+pcs_use <- 1:7
+# ================================
+# 7. Clustering
+# ================================
+organoid1 <- FindNeighbors(organoid1, dims = pcs_use)
+organoid1 <- FindClusters(organoid1, resolution = 1.0)
+
+
+organoid1 <- RunPCA(organoid1, npcs = 30)
+organoid1 <- RunTSNE(organoid1, dims = 1:20)
+
+# ================================
+# 8. t-SNE (Fig 3D style)
+# ================================
+organoid1 <- RunTSNE(
+  organoid1,
+  dims = pcs_use,
+  perplexity = 5
+)
+
+# ================================
+# 9. Markers
+# ================================
+markers1 <- FindAllMarkers(
+  organoid1,
+  only.pos = TRUE,
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+write.csv(markers, "markers1.csv")
+
+# ================================
+# 10. Modify cluster labels: Merge Cluster 1&2, and 4&6 
+# ================================
+# Ensure we are using Seurat clusters
+clusters <- as.character(Idents(organoid1))
+
+cluster_map <- c(
+  "0" = "Dorsal Forebrain Neurons", #key marker = SLC17A7
+  "1" = "Ventral forebrain NPCs", #key marker = NKX2-1
+  "2" = "Dorsal Forebrain NPCs", #key marker = FAM72A / IQGAP3
+  "3" = "Dorsal Forebrain NPCs", #key marker = CA12
+  "4" = "RSPO+ and Early NPCs", #key marker = CDC6 / CCNE2
+  "5" = "Mesenchymal Cells", #key marker = POSTN
+  "6" = "RSPO+ and Early NPCs", #key marker = RSPO2
+  "7" = "Ventral Forebrain Neurons" #key marker = PROX1
+)
+
+cluster_labels <- cluster_map[clusters]
+names(cluster_labels) <- Cells(organoid1)
+organoid1<- AddMetaData(
+  object = organoid1,
+  metadata = cluster_labels,
+  col.name = "cluster_label"
+)
+
+Idents(organoid1) <- "cluster_label"
+# ================================
+# 12. Custom t-SNE plot (MATCH FIGURE STYLE)
+# ================================
+tsne_df <- as.data.frame(Embeddings(organoid1, "tsne"))
+tsne_df$cluster <- Idents(organoid1)
+tsne_df$stage <- organoid1$stage
+
+ggplot(tsne_df, aes(tSNE_1, tSNE_2)) +
+  stat_ellipse(aes(fill = cluster), geom = "polygon", alpha = 0.2) +
+  geom_point(aes(shape = stage), color = "black", size = 2) +
+  scale_shape_manual(values = c(
+    "33d" = 16,
+    "35d" = 17,
+    "37d" = 15,
+    "41d" = 18,
+    "53d" = 3,
+    "58d" = 4,
+    "65d" = 8
+  )) +
+  theme_classic() +
+  labs(fill = "Cluster", shape = "Stage") +
+  ggtitle("Recreation of Camp et al Figure 3d: STAR Analysis")
