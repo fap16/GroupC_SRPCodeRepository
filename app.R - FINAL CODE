@@ -1,0 +1,660 @@
+#WebApp code - Organoid Explorer using pre & post sc RNA sequencing Analysis 
+  #Annotations/explanations of this code can be found on our github repository.
+
+#Import libraries & packages
+
+library(shiny)
+library(bslib)
+library(plotly)
+library(dplyr)
+library(Seurat)
+
+
+# PATHS
+
+app_dir  <- normalizePath(".", winslash = "/", mustWork = TRUE)
+data_dir <- file.path(app_dir, "data")
+www_dir  <- file.path(app_dir, "www")
+
+# Explicit static path
+addResourcePath("static", www_dir)
+
+# STARTUP CHECKS
+
+required_dirs <- c(data_dir, www_dir)
+missing_dirs <- required_dirs[!dir.exists(required_dirs)]
+
+if (length(missing_dirs) > 0) {
+  stop(
+    paste(
+      "Missing required directory/directories:",
+      paste(missing_dirs, collapse = ", ")
+    )
+  )
+}
+
+required_data_files <- c(
+  "pre_2016_umap_coords.rds",
+  "pre_2016_seurat.rds",
+  "pre_2016_expression_matrix.rds",
+  "post_2016_umap_coords.rds",
+  "post_2016_seurat.rds",
+  "post_2016_expression_matrix.rds"
+)
+
+required_image_files <- c(
+  "cellcomp_post2016.png",
+  "cellcomp_pre2016.png",
+  "fig3d_geo.png",
+  "fig3d_post2016.png",
+  "fig3d_pre2016.png",
+  "fig3e_post2016.png",
+  "fig3e_pre2016.png",
+  "fig3f_post2016.png",
+  "fig3f_pre2016.png",
+  "monocle_geo.png",
+  "monocle_post2016.png",
+  "monocle_pre2016.png"
+)
+
+missing_data_files <- required_data_files[
+  !file.exists(file.path(data_dir, required_data_files))
+]
+
+missing_image_files <- required_image_files[
+  !file.exists(file.path(www_dir, required_image_files))
+]
+
+if (length(missing_data_files) > 0) {
+  stop(
+    paste(
+      "Missing required data file(s):",
+      paste(missing_data_files, collapse = ", ")
+    )
+  )
+}
+
+if (length(missing_image_files) > 0) {
+  stop(
+    paste(
+      "Missing required image file(s) in www/:",
+      paste(missing_image_files, collapse = ", ")
+    )
+  )
+}
+
+
+# LOAD DATA
+
+# -------- PRE 2016 --------
+pre_umap_mat <- readRDS(file.path(data_dir, "pre_2016_umap_coords.rds"))
+pre_seurat   <- readRDS(file.path(data_dir, "pre_2016_seurat.rds"))
+pre_expr_mat <- readRDS(file.path(data_dir, "pre_2016_expression_matrix.rds"))
+
+pre_umap_df <- as.data.frame(pre_umap_mat)
+colnames(pre_umap_df) <- tolower(colnames(pre_umap_df))
+pre_umap_df$cell_id <- rownames(pre_umap_df)
+
+pre_common_cells <- Reduce(intersect, list(
+  colnames(pre_expr_mat),
+  pre_umap_df$cell_id
+))
+
+pre_expr_mat <- pre_expr_mat[, pre_common_cells, drop = FALSE]
+pre_umap_df  <- pre_umap_df[match(pre_common_cells, pre_umap_df$cell_id), ]
+pre_umap_df$cluster <- as.factor(Idents(pre_seurat)[pre_common_cells])
+
+pre_genes <- rownames(pre_expr_mat)
+
+# -------- POST 2016 --------
+post_umap_mat <- readRDS(file.path(data_dir, "post_2016_umap_coords.rds"))
+post_seurat   <- readRDS(file.path(data_dir, "post_2016_seurat.rds"))
+post_expr_mat <- readRDS(file.path(data_dir, "post_2016_expression_matrix.rds"))
+
+post_umap_df <- as.data.frame(post_umap_mat)
+colnames(post_umap_df) <- tolower(colnames(post_umap_df))
+post_umap_df$cell_id <- rownames(post_umap_df)
+
+post_common_cells <- Reduce(intersect, list(
+  colnames(post_expr_mat),
+  post_umap_df$cell_id
+))
+
+post_expr_mat <- post_expr_mat[, post_common_cells, drop = FALSE]
+post_umap_df  <- post_umap_df[match(post_common_cells, post_umap_df$cell_id), ]
+post_umap_df$cluster <- as.factor(Idents(post_seurat)[post_common_cells])
+
+post_genes <- rownames(post_expr_mat)
+
+
+# HELPERS
+
+tab_description <- function(text) {
+  tags$p(
+    text,
+    style = "margin: 15px 0 10px 0; color: #adb5bd; font-size: 15px;"
+  )
+}
+
+section_title <- function(text) {
+  tags$h4(
+    text,
+    style = "margin-top: 20px; margin-bottom: 10px;"
+  )
+}
+
+static_img_src <- function(filename) {
+  full_path <- file.path(www_dir, filename)
+  
+  if (!file.exists(full_path)) {
+    stop(paste("Image file not found:", filename))
+  }
+  
+  version_tag <- as.integer(file.info(full_path)$mtime)
+  paste0("static/", filename, "?v=", version_tag)
+}
+
+image_panel_half <- function(src, label, description = NULL, img_height = "420px") {
+  column(
+    width = 6,
+    tags$div(
+      style = "padding: 10px;",
+      if (!is.null(description)) {
+        tags$div(
+          description,
+          style = "margin-bottom:10px; color:#adb5bd; font-size:14px;"
+        )
+      },
+      tags$div(
+        style = paste0(
+          "height:", img_height, "; ",
+          "display:flex; ",
+          "align-items:center; ",
+          "justify-content:center; ",
+          "overflow:hidden; ",
+          "background-color:#2b2b2b; ",
+          "border:1px solid #444; ",
+          "border-radius:6px; ",
+          "padding:10px;"
+        ),
+        tags$img(
+          src = src,
+          style = "max-width:100%; max-height:100%; object-fit:contain; display:block;"
+        )
+      ),
+      tags$div(
+        label,
+        style = "text-align:center; font-weight:bold; margin-top:10px;"
+      )
+    )
+  )
+}
+
+image_panel_full <- function(src, label, description = NULL, img_height = "420px") {
+  column(
+    width = 12,
+    tags$div(
+      style = "padding: 10px 10px 20px 10px;",
+      if (!is.null(description)) {
+        tags$div(
+          description,
+          style = "margin-bottom:10px; color:#adb5bd; font-size:14px;"
+        )
+      },
+      tags$div(
+        style = paste0(
+          "height:", img_height, "; ",
+          "display:flex; ",
+          "align-items:center; ",
+          "justify-content:center; ",
+          "overflow:hidden; ",
+          "background-color:#2b2b2b; ",
+          "border:1px solid #444; ",
+          "border-radius:6px; ",
+          "padding:10px;"
+        ),
+        tags$img(
+          src = src,
+          style = "max-width:100%; max-height:100%; object-fit:contain; display:block;"
+        )
+      ),
+      tags$div(
+        label,
+        style = "text-align:center; font-weight:bold; margin-top:10px;"
+      )
+    )
+  )
+}
+
+make_expr_summary <- function(df) {
+  df %>%
+    group_by(cluster) %>%
+    summarise(
+      avg_expr = mean(expr),
+      pct_expr = mean(expr > 0) * 100,
+      n = n(),
+      .groups = "drop"
+    )
+}
+
+make_gene_df <- function(expr_mat, selected_gene, common_cells, umap_df) {
+  validate(
+    need(selected_gene %in% rownames(expr_mat), "Selected gene not found in expression matrix.")
+  )
+  
+  expr <- expr_mat[selected_gene, , drop = TRUE]
+  
+  df <- data.frame(
+    cell_id = common_cells,
+    expr = as.numeric(expr),
+    umap_1 = umap_df$umap_1,
+    umap_2 = umap_df$umap_2,
+    cluster = umap_df$cluster,
+    stringsAsFactors = FALSE
+  )
+  
+  df <- df[!is.na(df$expr), , drop = FALSE]
+  df$expr_scaled <- log1p(df$expr)
+  df
+}
+
+cluster_centers <- function(df) {
+  df %>%
+    group_by(cluster) %>%
+    summarise(
+      umap_1 = mean(umap_1, na.rm = TRUE),
+      umap_2 = mean(umap_2, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+make_plot <- function(df, plot_type, color_scale = "Viridis", point_size = 5, show_labels = FALSE) {
+  if (plot_type == "violin") {
+    plot_ly(
+      df,
+      x = ~cluster,
+      y = ~expr,
+      type = "violin",
+      box = list(visible = TRUE),
+      meanline = list(visible = TRUE),
+      points = "none"
+    ) %>%
+      layout(
+        xaxis = list(title = "Cluster"),
+        yaxis = list(title = "Expression")
+      )
+  } else {
+    p <- plot_ly(
+      df,
+      x = ~umap_1,
+      y = ~umap_2,
+      type = "scatter",
+      mode = "markers",
+      marker = list(
+        color = df$expr_scaled,
+        colorscale = color_scale,
+        size = point_size,
+        showscale = TRUE,
+        colorbar = list(title = "log1p(expr)")
+      ),
+      text = ~paste0(
+        "Cell: ", cell_id,
+        "<br>Cluster: ", cluster,
+        "<br>Expr: ", round(expr, 3)
+      ),
+      hoverinfo = "text"
+    ) %>%
+      layout(
+        xaxis = list(title = "UMAP 1"),
+        yaxis = list(title = "UMAP 2")
+      )
+    
+    if (isTRUE(show_labels)) {
+      centers <- cluster_centers(df)
+      
+      p <- p %>%
+        add_text(
+          data = centers,
+          x = ~umap_1,
+          y = ~umap_2,
+          text = ~cluster,
+          textposition = "middle center",
+          textfont = list(size = 14, color = "white"),
+          inherit = FALSE,
+          hoverinfo = "none",
+          showlegend = FALSE
+        )
+    }
+    
+    p
+  }
+}
+
+# UI
+
+ui <- fluidPage(
+  theme = bs_theme(version = 5, bootswatch = "darkly"),
+  titlePanel("Cerebral Organoid scRNA-seq Explorer"),
+  
+  tabsetPanel(
+    
+    tabPanel(
+      "About",
+      fluidRow(
+        column(
+          10, offset = 1,
+          tags$div(
+            style = "padding-top: 10px;",
+            
+            tags$h3("About this explorer"),
+            tags$p(
+              "Our application has been developed to aide the visualisation of the cell trajectories & gene expression within 2 cerebral organoid single-cell RNA-seq datasets.",
+              "The variety of tabs enable comparison of cell identity & pattern recognition within both the the cell data produced via a pre & post 2016 analytic pipeline.",
+              "Explanation & conclusions of each visualisation are detailed in the associated SRP Group C Report." ,
+              style = "color: #adb5bd; font-size: 16px; line-height: 1.7;"
+            ),
+            
+            section_title("Description"),
+            tags$p(
+              "To make full use of this app, navigate between the Pre & Post 2016 gene query tabs for your chosen gene. Additionally, review the overall cell compositions & tSNE (organoid data only) or Figure 3E to evaluate clustering further.",
+              "To focus on cell lineages & trajectories, explore the Monocle & Figure 3F comparisons.",
+              style = "color: #adb5bd; font-size: 15px; line-height: 1.7;"
+            ),
+            
+            section_title("Authors"),
+            tags$div(
+              style = "color: #91c8ff; font-size: 15px; line-height: 1.8;",
+              tags$p("Group C:"),
+              tags$ul(
+                tags$li("Gattab, Asad A.K."),
+                tags$li("Jhyount, Maya K."),
+                tags$li("Patel, Fatima A."),
+                tags$li("Marabathula, Ramarao"),
+                tags$li("Varghese Kodiattu, John")
+              )
+            ),
+            
+            section_title("How to use"),
+            tags$div(
+              style = "color: #adb5bd; font-size: 15px; line-height: 1.8;",
+              tags$ul(
+                tags$li("Use the Pre-2016 and Post-2016 Gene Query tabs to explore gene expression across the data. Hover over the plot to identify cell name & cluster."),
+                tags$li("Switch between UMAP and violin plots for complementary views of expression."),
+                tags$li("Adjust colour scales, point size, and cluster labels for more interactive UMAP visualisation."),
+                tags$li("Browse the comparison tabs to inspect static figures across datasets.")
+              )
+            )
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Pre-2016 Gene Query",
+      tab_description("Explore gene expression in the pre-2016 cerebral organoid dataset using UMAP and violin plots. This data was generated using FactoMineR packages."),
+      
+      fluidRow(
+        column(
+          4,
+          card(
+            card_header("Search"),
+            selectizeInput("pre_gene", "Gene", choices = pre_genes),
+            radioButtons(
+              "pre_plot_type",
+              "Plot type",
+              choices = c("UMAP" = "umap", "Violin" = "violin"),
+              selected = "umap"
+            ),
+            selectInput(
+              "pre_color_scale",
+              "UMAP colour scale",
+              choices = c("Viridis", "Cividis", "Plasma", "Inferno", "Magma", "Blues", "Greens", "Reds"),
+              selected = "Viridis"
+            ),
+            sliderInput(
+              "pre_point_size",
+              "UMAP point size",
+              min = 2, max = 10, value = 5, step = 1
+            ),
+            checkboxInput(
+              "pre_show_labels",
+              "Show cluster labels on UMAP",
+              value = FALSE
+            ),
+            actionButton("pre_go", "Search")
+          )
+        ),
+        column(
+          8,
+          card(
+            card_header("Results"),
+            fluidRow(
+              column(7, plotlyOutput("pre_plot", height = "450px")),
+              column(5, tableOutput("pre_table"))
+            )
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Post-2016 Gene Query",
+      tab_description("Explore gene expression in the post-2016 cerebral organoid dataset using UMAP and violin plots. This dataset was created using a STAR analysis pipeline."),
+      
+      fluidRow(
+        column(
+          4,
+          card(
+            card_header("Search"),
+            selectizeInput("post_gene", "Gene", choices = post_genes),
+            radioButtons(
+              "post_plot_type",
+              "Plot type",
+              choices = c("UMAP" = "umap", "Violin" = "violin"),
+              selected = "umap"
+            ),
+            selectInput(
+              "post_color_scale",
+              "UMAP colour scale",
+              choices = c("Viridis", "Cividis", "Plasma", "Inferno", "Magma", "Blues", "Greens", "Reds"),
+              selected = "Viridis"
+            ),
+            sliderInput(
+              "post_point_size",
+              "UMAP point size",
+              min = 2, max = 10, value = 5, step = 1
+            ),
+            checkboxInput(
+              "post_show_labels",
+              "Show cluster labels on UMAP",
+              value = FALSE
+            ),
+            actionButton("post_go", "Search")
+          )
+        ),
+        column(
+          8,
+          card(
+            card_header("Results"),
+            fluidRow(
+              column(7, plotlyOutput("post_plot", height = "450px")),
+              column(5, tableOutput("post_table"))
+            )
+          )
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Monocle Comparison",
+      tab_description("The figures below show the reconstructed AP-to-BP-to-neuron lineage in the fetal neocortex, using Monocle 2 as a tool to order cells along a pseudotemporal path, that matches the cortical zones."),
+      
+      fluidRow(
+        image_panel_full(
+          static_img_src("monocle_geo.png"),
+          "Created using the GEO dataset provided by the original Camp et al study.",
+          img_height = "420px"
+        )
+      ),
+      fluidRow(
+        image_panel_half(
+          static_img_src("monocle_pre2016.png"),
+          "Pre-2016 Recreation",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("monocle_post2016.png"),
+          "Post-2016 Recreation",
+          img_height = "420px"
+        )
+      )
+    ),
+    
+  
+    tabPanel(
+      "Fig 3D (tSNE) Comparison",
+      tab_description("The figures below show the clustering formed by the organoid cells in the Pre and Post-2016 datasets. Fetal cell data was filtered out for accurate recreation."),
+      
+      fluidRow(
+        image_panel_full(
+          static_img_src("fig3d_geo.png"),
+          "Created using the GEO dataset provided by the original Camp et al study.",,
+          img_height = "420px"
+        )
+      ),
+      fluidRow(
+        image_panel_half(
+          static_img_src("fig3d_pre2016.png"),
+          "Pre-2016 Recreation",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("fig3d_post2016.png"),
+          "Post-2016 Recreation",
+          img_height = "420px"
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Fig 3E Comparison",
+      tab_description("The figures below identify each cluster by marker-gene expression, showing which clusters correspond to cortex-like cells versus other lineages."),
+      
+      fluidRow(
+        image_panel_half(
+          static_img_src("fig3e_pre2016.png"),
+          "Pre-2016",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("fig3e_post2016.png"),
+          "Post-2016",
+          img_height = "420px"
+        )
+      )
+    ),
+    tabPanel(
+      "Fig 3F Comparison",
+      tab_description("The violin plots below validate the regional identity of the microdissected organoid samples by comparing FOXG1, NEUROD6, and OTX2 expression against fetal cortex, distinguishing dorsal cortex-like regions from ventral forebrain-like ones."),
+      
+      fluidRow(
+        image_panel_half(
+          static_img_src("fig3f_pre2016.png"),
+          "Pre-2016",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("fig3f_post2016.png"),
+          "Post-2016",
+          img_height = "420px"
+        )
+      )
+    ),
+  
+    
+    tabPanel(
+      "Cell Composition Comparison",
+      tab_description("Compare cell type composition between pre-2016 and post-2016 cerebral organoid datasets."),
+      
+      fluidRow(
+        image_panel_half(
+          static_img_src("cellcomp_pre2016.png"),
+          "Pre-2016 Cell Composition",
+          img_height = "420px"
+        ),
+        image_panel_half(
+          static_img_src("cellcomp_post2016.png"),
+          "Post-2016 Cell Composition",
+          img_height = "420px"
+        )
+      )
+    )
+  )
+)
+
+# ================================
+# SERVER
+# ================================
+server <- function(input, output, session) {
+  
+  pre_data <- eventReactive(input$pre_go, {
+    req(input$pre_gene)
+    make_gene_df(
+      expr_mat = pre_expr_mat,
+      selected_gene = input$pre_gene,
+      common_cells = pre_common_cells,
+      umap_df = pre_umap_df
+    )
+  })
+  
+  post_data <- eventReactive(input$post_go, {
+    req(input$post_gene)
+    make_gene_df(
+      expr_mat = post_expr_mat,
+      selected_gene = input$post_gene,
+      common_cells = post_common_cells,
+      umap_df = post_umap_df
+    )
+  })
+  
+  output$pre_plot <- renderPlotly({
+    df <- pre_data()
+    req(df)
+    make_plot(
+      df = df,
+      plot_type = input$pre_plot_type,
+      color_scale = input$pre_color_scale,
+      point_size = input$pre_point_size,
+      show_labels = input$pre_show_labels
+    )
+  })
+  
+  output$post_plot <- renderPlotly({
+    df <- post_data()
+    req(df)
+    make_plot(
+      df = df,
+      plot_type = input$post_plot_type,
+      color_scale = input$post_color_scale,
+      point_size = input$post_point_size,
+      show_labels = input$post_show_labels
+    )
+  })
+  
+  output$pre_table <- renderTable({
+    df <- pre_data()
+    req(df)
+    make_expr_summary(df)
+  })
+  
+  output$post_table <- renderTable({
+    df <- post_data()
+    req(df)
+    make_expr_summary(df)
+  })
+}
+
+# ================================
+# RUN APP
+# ================================
+shinyApp(ui, server)
