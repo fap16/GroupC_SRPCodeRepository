@@ -7,59 +7,61 @@
 #SBATCH --mem=24G
 #SBATCH --time=48:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=aakg1@student.le.ac.uk
-#SBATCH --output=/scratch/alice/a/aakg1/SRA_project/logs/sra_to_fastq.out
-#SBATCH --error=/scratch/alice/a/aakg1/SRA_project/logs/sra_to_fastq.err
+#SBATCH --mail-user= (input personal email)
+#SBATCH --output=/scratch/alice/a/aakg1/SRA_project/logs/sra_to_fastq_%A_%a.out
+#SBATCH --error=/scratch/alice/a/aakg1/SRA_project/logs/sra_to_fastq_%A_%a.err
 #SBATCH --export=NONE
 
 # Load SRA toolkit
 module load sratoolkit/3.0.0-5fetwpi
 
-# Assigning directories for use/can set your own
+# Assigning directories for use
+PROJ="/scratch/alice/a/aakg1/SRA_project"
+ACC_LIST="${PROJ}/SRR_Acc_List.txt"
+SRA_DIR="${PROJ}/sra"
+FASTQ_DIR="${PROJ}/fastq"
+LOG_DIR="${PROJ}/logs"
+TMP_all="${PROJ}/tmp"
 
-#PROJ="/scratch/alice/a/aakg1/SRA_project"
-#ACC_LIST="${PROJ}/SRR_Acc_List.txt"
-#SRA_DIR="${PROJ}/sra"
-#FASTQ_DIR="${PROJ}/fastq"
-#LOG_DIR="${PROJ}/logs"
-#TMP_BASE="${PROJ}/tmp"
-TOTAL=734 #set your own total or how many you need
-WORKERS=16 #how many jobs running/limit is 16 for AlICE
+# set total job size and workers needed for loop
+TOTAL=734
+WORKERS=16
 
-# Check accession list exists
+# check if accession list is present, if present the code will run
 [[ -f "${ACC_LIST}" ]] || { echo "ERROR: Accession list not found: ${ACC_LIST}"; exit 1; }
-cd "${PROJ}" || { echo "ERROR: Could not enter ${PROJ}"; exit 1; }
+cd "${PROJ}"
 
-# Create required directories
-mkdir -p "${SRA_DIR}" "${FASTQ_DIR}" "${LOG_DIR}" "${TMP_BASE}"
-# Loop through accessions assigned to this array task
+# Creating required directories
+mkdir -p "${SRA_DIR}" "${FASTQ_DIR}" "${LOG_DIR}" "${TMP_all}"
+
+# loop for task array to run through all accessions
 for i in $(seq "${SLURM_ARRAY_TASK_ID}" "${WORKERS}" "${TOTAL}"); do
     srr=$(sed -n "${i}p" "${ACC_LIST}" | tr -d '[:space:]')
     [[ -z "${srr}" ]] && continue
-    # Temporary directory for this accession
-    TMP_DIR="${TMP_BASE}/${SLURM_ARRAY_JOB_ID}_${i}"
-    mkdir -p "${TMP_DIR}"
-   
-    # Download SRA
+
+#store files in temporary to avoid overwriting
+TMP_DIR="${TMP_all}/${SLURM_ARRAY_JOB_ID}_${i}"
+mkdir -p "${TMP_DIR}"
+
+ # Prefetching/Downloading all srr
 prefetch --output-directory "${SRA_DIR}" "${srr}" \
-        || { echo "ERROR: prefetch failed for ${srr}"; rm -rf "${TMP_DIR}"; continue; }
-
-# Check SRA exists
+|| { echo "ERROR: prefetch failed for ${srr}"; continue; } #will show which srr failed 
 SRA_PATH="${SRA_DIR}/${srr}/${srr}.sra"
+    [[ -f "${SRA_PATH}" ]] || { echo "ERROR: SRA file missing for ${srr}"; continue; }
 
-#####################################################
-#####################################################
-    # Convert to FASTQ
+# Convert to FASTQ for STAR alignment
 fasterq-dump \
         --split-files \
         --threads "${SLURM_CPUS_PER_TASK:-8}" \
         --outdir "${FASTQ_DIR}" \
         --temp "${TMP_DIR}" \
         "${SRA_PATH}" \
-        || { echo "ERROR: fasterq-dump failed for ${srr}"; rm -rf "${TMP_DIR}"; continue; }
+        || { echo "ERROR: fasterq-dump failed for ${srr}"; continue; }
 
-    # Compress FASTQ files
-gzip -f "${FASTQ_DIR}/${srr}"*.fastq \
-        || { echo "ERROR: gzip failed for ${srr}"; rm -rf "${TMP_DIR}"; continue; }
+# Compress FASTQ files
+ gzip -f "${FASTQ_DIR}/${srr}"*.fastq
 
+rm -rf "${TMP_DIR}" #delete temporary file folder
+
+    echo "Success: ${srr} completed successfully"
 done
