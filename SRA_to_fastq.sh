@@ -1,3 +1,6 @@
+#Slurm script for SRR accession conversion to FASTQ
+#last update 27/04/2026
+
 #!/usr/bin/bash
 #SBATCH --job-name=sra_to_fastq
 #SBATCH --nodes=1
