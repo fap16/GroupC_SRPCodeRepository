@@ -54,3 +54,14 @@ Generates visual outputs corresponding to key analyses in the original study, in
 Used to assign biological identities to clusters (e.g. forebrain, midbrain–hindbrain, mesenchymal populations) and to compare organoid-derived samples (r1–r4) with fetal tissue. 
 
 **References**
+Camp, J.G. et al. (2015) ‘Human cerebral organoids recapitulate gene expression programs of fetal neocortex development’, Proceedings of the National Academy of Sciences, 112(51), pp. 15672–15677. 
+Hao, Y. et al. (2023) ‘Dictionary learning for integrative, multimodal and individualizable single-cell analysis’, Nature Biotechnology, 42(2), pp. 293–304. 
+Harrow, J. et al. (2012) ‘GENCODE: the reference annotation for the human genome project’, Genome Research, 22(9), pp. 1760–1774. 
+Kim, D. et al. (2013) ‘TopHat2: accurate alignment of transcriptomes in the presence of insertions, deletions and gene fusions’, Genome Biology, 14(4), R36. 
+Langmead, B. and Salzberg, S.L. (2012) ‘Fast gapped-read alignment with Bowtie 2’, Nature Methods, 9(4), pp. 357–359. 
+Lê, S., Josse, J. and Husson, F. (2008) ‘FactoMineR: an R package for multivariate analysis’, Journal of Statistical Software, 25(1), pp. 1–18. 
+Luecken, M.D. and Theis, F.J. (2019) ‘Current best practices in single-cell RNA-seq analysis’, Molecular Systems Biology, 15(6), e8746. 
+Satija, R. et al. (2015) ‘Spatial reconstruction of single-cell gene expression data’, Nature Biotechnology, 33(5), pp. 495–502. 
+Trapnell, C. et al. (2010) ‘Transcript assembly and quantification by RNA-Seq reveals unannotated transcripts and isoform switching during cell differentiation’, Nature Biotechnology, 28(5), pp. 511–515. 
+Trapnell, C. et al. (2012) ‘Differential gene and transcript expression analysis of RNA-seq experiments with TopHat and Cufflinks’, Nature Protocols, 7(3), pp. 562–578. 
+van der Maaten, L. and Hinton, G. (2008) ‘Visualizing data using t-SNE’, Journal of Machine Learning Research, 9(11), pp. 2579–2605. 
