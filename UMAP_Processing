@@ -1,0 +1,129 @@
+#PRE 2016 PIPELINE UMAP PROCESSING 
+#set up & prep
+
+setwd("~/steered_research_project/r_shiny/matrixes")
+
+library(Seurat)
+library(tidyverse)
+library(FactoMineR)
+library(factoextra)
+library(FactoInvestigate)
+
+#load data in - convert csv to a matrix, then to a seurat object 
+raw_counts <- read.csv(
+  "john_counts_with_stage_names.csv",
+  row.names = 1,
+  check.names = FALSE
+)
+
+raw_counts <- as.matrix(raw_counts)
+
+#convert to seurat obj
+pre2016 <- CreateSeuratObject(
+  counts = raw_counts,
+  project = "Camp_Replication",
+  min.cells = 3,
+  min.features = 200
+)
+
+#standard preprocessing - remains the same with FactoMineR
+pre2016 <- NormalizeData(pre2016)
+pre2016 <- FindVariableFeatures(pre2016, nfeatures = 2000)
+pre2016 <- ScaleData(pre2016)
+
+#PCA using FACTOMINER
+scaled_matrix <- GetAssayData(pre2016, layer = "scale.data")[VariableFeatures(pre2016), ]
+scaled_matrix <- t(as.matrix(scaled_matrix))
+
+res.pca <- PCA(scaled_matrix, ncp = 15, graph = FALSE)
+
+#embed within Seurat object for use 
+pre2016[["pca"]] <- CreateDimReducObject(
+  embeddings = pca_embeddings,
+  key = "PC_",
+  assay = DefaultAssay(pre2016)
+)
+
+#carry out neighbouring & clustering based on FACTOMINER PCA 
+pcs_use <- 1:8 #captures 60% varinace and avoids noise 
+
+pre2016 <- FindNeighbors(pre2016, dims = pcs_use)
+pre2016 <- FindClusters(pre2016, resolution = 1.0)
+
+#UMAP formation based on FACTOMINER
+pre2016 <- RunUMAP(pre2016, dims = pcs_use)
+
+#KEY - Building of a PCA-derived gene signature (top genes in each of the 1-15 PCS) of the dataset = allows for better biological interpretation of PCs, allows for key marker discovery 
+pca_stats <- dimdesc(res.pca, proba = 0.001)
+
+paper_features <- unlist(lapply(1:15, function(i) {
+  pc_name <- paste0("Dim.", i)
+  if (!is.null(pca_stats[[pc_name]]$quanti)) {
+    head(rownames(pca_stats[[pc_name]]$quanti), 50)
+  } else {
+    NULL
+  }
+}))
+
+paper_features <- unique(paper_features)
+
+#export all outputs
+saveRDS(GetAssayData(pre2016), "pre_2016_expression_matrix.rds")
+saveRDS(pre2016, "pre_2016_seurat.rds")
+saveRDS(Embeddings(pre2016, "umap"), "pre_2016_umap_coords.rds")
+saveRDS(res.pca, "pre_2016_factominer_pca.rds") #saved for reproducability
+
+#POST 2016
+
+#post 2016 UMAP gene query
+
+#set up & prep
+
+setwd("~/steered_research_project/r_shiny/matrixes")
+
+library(Seurat)
+library(tidyverse)
+
+#load data in - convert csv to a matrix, then to a seurat object 
+raw_counts <- read.csv(
+  "asads_counts_with_stage_names.csv",
+  row.names = 1,
+  check.names = FALSE
+)
+
+raw_counts <- as.matrix(raw_counts)
+
+#convert to seurat obj
+post2016 <- CreateSeuratObject(
+  counts = raw_counts,
+  project = "Camp_Replication",
+  min.cells = 3,
+  min.features = 200
+)
+
+#standard preprocessing - remains the same with FactoMineR
+post2016 <- NormalizeData(post2016)
+post2016 <- FindVariableFeatures(post2016, nfeatures = 2000)
+post2016 <- ScaleData(post2016)
+post2016 <- RunPCA(post2016, npcs = 30)
+
+#choose number of pcs via elbow plot 
+ElbowPlot(post2016)
+pcs_use <- 1:8   # typical default
+
+#neighbour graoh & cell clustering
+post2016 <- FindNeighbors(post2016, dims = pcs_use)
+post2016 <- FindClusters(post2016, resolution = 1.0)
+
+#run umap 
+post2016 <- RunUMAP(post2016, dims = pcs_use)
+
+#export files
+saveRDS(GetAssayData(post2016), "post_2016_expression_matrix.rds")
+saveRDS(post2016, "post_2016_seurat.rds")
+saveRDS(
+  Embeddings(post2016, "umap"),
+  "post_2016_umap_coords.rds"
+)
+
+
