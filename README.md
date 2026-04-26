@@ -49,5 +49,6 @@ Downstream Analysis & Visualisation (Seurat)
 This stage performs clustering and visualisation using Seurat (v5) in R. The count matrix is loaded into Seurat to create a Seurat object, followed by standard preprocessing steps including normalisation, feature selection, and scaling. Dimensionality reduction is performed using Principal Component Analysis (PCA), followed by UMAP for visualisation of sample neighbouring relationships in reduced-dimensional space. Clustering is applied to identify groups of samples with similar gene expression patterns. Marker genes are analysed to interpret cluster identities and assess biological relevance. Although the dataset lacks true single-cell resolution, this approach enables exploration of transcriptional structure and comparison of expression patterns across samples. The outputs include UMAP plots and cluster assignments, providing a visual representation of the dataset structure and enabling comparison with expected biological trends. 
 
  
-Notes 
+Notes and trouble shooting:
 This pipeline was developed as part of an academic project to implement and evaluate a modern RNA-seq workflow. It highlights key differences between the original and post-2016 approaches, particularly in alignment efficiency.  
+Some SRR accessions produced incomplete outputs, indicating silent processing failures. These were identified through log inspection and resolved by re-running affected samples, ensuring completeness of the dataset prior to downstream analysis. 
