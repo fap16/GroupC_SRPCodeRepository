@@ -15,9 +15,9 @@ set -euo pipefail
 module load star/2.7.11a-5kstrrw
 #set own paths for use and directories generated
 
-#GENOME_DIR="/scratch/alice/a/aakg1/genome_files/star_index"
-#FASTA="/scratch/alice/a/aakg1/genome_files/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
-#GTF="/scratch/alice/a/aakg1/genome_files/Homo_sapiens.GRCh38.110.gtf"
+GENOME_DIR="/scratch/alice/a/aakg1/genome_files/star_index"
+FASTA="/scratch/alice/a/aakg1/genome_files/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+GTF="/scratch/alice/a/aakg1/genome_files/Homo_sapiens.GRCh38.110.gtf"
 
 mkdir -p "$GENOME_DIR"
 
