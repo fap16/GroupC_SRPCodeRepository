@@ -1,0 +1,138 @@
+############################################
+# 0. SET WORKING DIRECTORY
+############################################
+
+setwd("/home/fap16/steered_research_project/r_shiny/matrixes")
+
+############################################
+# 1. LOAD PACKAGES
+############################################
+
+library(data.table)
+library(dplyr)
+
+############################################
+# 2. LOAD COUNT MATRIX
+############################################
+
+counts <- read.table(
+  "asads_deseq2_counts_matrix.tsv",
+  header = TRUE,
+  row.names = 1,
+  sep = "\t",
+  check.names = FALSE
+)
+
+stopifnot(is.data.frame(counts))
+cat("Initial matrix:", dim(counts), "\n")
+
+counts <- counts[, colnames(counts) != "gene_id"] #prevent issue w combining data
+
+############################################
+# 3. CHECK ORIENTATION
+############################################
+
+if (nrow(counts) < ncol(counts)) {
+  warning("Matrix may be transposed — check manually")
+}
+
+############################################
+# 4. LOAD GENE MAP (NO GTF ANYMORE)
+############################################
+
+gene_map <- readRDS("gene_map_v49.rds")
+
+stopifnot(all(c("gene_id", "gene_name") %in% colnames(gene_map)))
+
+cat("Gene map size:", nrow(gene_map), "\n")
+
+############################################
+# 5. CHECK OVERLAP
+############################################
+
+overlap <- length(intersect(rownames(counts), gene_map$gene_id))
+
+cat("Gene overlap:", overlap, "\n")
+
+stopifnot(overlap > 1000)
+
+############################################
+# 6. MAP GENE SYMBOLS
+############################################
+
+counts$gene_name <- gene_map$gene_name[
+  match(rownames(counts), gene_map$gene_id)
+]
+
+cat("Mapped genes:", sum(!is.na(counts$gene_name)), "\n")
+
+############################################
+# 7. REMOVE UNMAPPED
+############################################
+
+counts <- counts[!is.na(counts$gene_name), ]
+
+stopifnot(nrow(counts) > 100)
+
+############################################
+# 8. COLLAPSE DUPLICATE GENES (SAFE)
+############################################
+
+counts_mat <- as.matrix(counts[, colnames(counts) != "gene_name"])
+gene_ids <- counts$gene_name
+
+counts <- as.data.frame(rowsum(counts_mat, group = gene_ids))
+
+cat("Final gene matrix:", dim(counts), "\n")
+
+############################################
+# 9. LOAD METADATA
+############################################
+
+meta <- read.csv("SraRunTable.csv")
+
+stopifnot(all(c("Run", "stage") %in% colnames(meta)))
+
+rownames(meta) <- meta$Run
+
+############################################
+# 10. ALIGN METADATA SAFELY
+############################################
+
+colnames(counts) <- trimws(colnames(counts))
+meta$Run <- trimws(meta$Run)
+
+meta <- meta[match(colnames(counts), meta$Run), ]
+
+stopifnot(all(meta$Run == colnames(counts)))
+
+cat("Matched cells:", nrow(meta), "\n")
+
+############################################
+# 11. ADD STAGE LABELS
+############################################
+
+counts_stage <- counts
+
+colnames(counts_stage) <- paste0(
+  colnames(counts),
+  "_",
+  meta$stage
+)
+
+############################################
+# 12. FINAL QC
+############################################
+
+cat("Final shape:", dim(counts), "\n")
+
+stopifnot(nrow(counts) > 100)
+stopifnot(ncol(counts) > 1)
+
+############################################
+# 13. SAVE OUTPUTS
+############################################
+
+write.csv(counts, "counts_gene_symbols.csv")
+write.csv(counts_stage, "asads_counts_with_stage_names.csv")
+write.csv(meta, "metadata.csv")
