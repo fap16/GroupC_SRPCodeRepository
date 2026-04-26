@@ -1,3 +1,6 @@
+#index creation using grch38.p14 and GTF annotation file
+#last update: 26/04/2026
+
 #!/usr/bin/bash
 #SBATCH --job-name=STAR_index
 #SBATCH --nodes=1
