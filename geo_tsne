@@ -1,0 +1,189 @@
+#GEO TSNE 
+
+# ================================
+# 0. Setup
+# ================================
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+setwd("/home/fap16/steered_research_project/r_shiny")
+set.seed(42)
+
+# ================================
+# 1. Load data
+# ================================
+raw_df <- read.table(
+  gzfile("GSE75140_hOrg.fetal.master.data.frame.txt.gz"),
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  quote = "",
+  comment.char = ""
+)
+
+colnames(raw_df)[1] <- "cell_id"
+
+# clean gene names
+gene_names <- colnames(raw_df)[-1]
+gene_names <- trimws(gsub('"', '', gene_names))
+colnames(raw_df)[-1] <- gene_names
+
+# expression matrix
+expr_matrix <- as.matrix(raw_df[, -1])
+mode(expr_matrix) <- "numeric"
+rownames(expr_matrix) <- raw_df$cell_id
+expr_matrix[is.na(expr_matrix)] <- 0
+
+# genes x cells
+expr_matrix <- t(expr_matrix)
+
+# ================================
+# 2. Create Seurat object (IMPORTANT FIX)
+# ================================
+seurat_obj <- CreateSeuratObject(counts = expr_matrix)
+
+# ================================
+# 3. OPTIONAL: subset organoid-only cells
+# (EDIT THIS PATTERN TO YOUR DATA)
+# ================================o
+organoid_cells <- grep(
+  "Org33d|Org35d|Org37d|Org41d|Org65d|reg1_53d|reg2_53d|reg3_58d|reg4_58d",
+  colnames(seurat_obj),
+  value = TRUE
+)
+
+seurat_obj <- subset(seurat_obj, cells = organoid_cells)
+
+# ================================
+# 4. Extract stage metadata from cell_id
+# ================================
+seurat_obj$stage <- case_when(
+  str_detect(Cells(seurat_obj), "Org33d") ~ "33",
+  str_detect(Cells(seurat_obj), "Org35d") ~ "35",
+  str_detect(Cells(seurat_obj), "Org37d") ~ "37",
+  str_detect(Cells(seurat_obj), "Org41d") ~ "41",
+  str_detect(Cells(seurat_obj), "Org65d") ~ "65",
+  str_detect(Cells(seurat_obj), "reg1_53d") ~ "R1 53",
+  str_detect(Cells(seurat_obj), "reg2_53d") ~ "R2 53",
+  str_detect(Cells(seurat_obj), "reg3_58d") ~ "R3 58",
+  str_detect(Cells(seurat_obj), "reg4_58d") ~ "R4 58",
+  TRUE ~ "Other"
+)
+# ================================
+# 5. Standard pre-processing
+# ================================
+seurat_obj <- NormalizeData(seurat_obj)
+seurat_obj <- FindVariableFeatures(seurat_obj, nfeatures = 2000)
+seurat_obj <- ScaleData(seurat_obj, features = VariableFeatures(seurat_obj))
+
+# ================================
+# 6. PCA (ONLY on selected cells)
+# ================================
+seurat_obj <- RunPCA(
+  seurat_obj,
+  features = VariableFeatures(seurat_obj),
+  npcs = 30
+)
+
+ElbowPlot(seurat_obj)
+
+pcs_use <- 1:7
+
+# ================================
+# 7. Clustering
+# ================================
+seurat_obj <- FindNeighbors(seurat_obj, dims = pcs_use)
+seurat_obj <- FindClusters(seurat_obj, resolution = 1.0)
+
+#UMAP
+
+seurat_obj <- RunPCA(seurat_obj, npcs = 30)
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:20)
+seurat_obj <- RunTSNE(seurat_obj, dims = 1:20)
+
+# ================================
+# 8. t-SNE (Fig 3D style)
+# ================================
+seurat_obj <- RunTSNE(
+  seurat_obj,
+  dims = pcs_use,
+  perplexity = 5
+)
+
+# ================================
+# 9. Markers
+# ================================
+markers <- FindAllMarkers(
+  seurat_obj,
+  only.pos = TRUE,
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+write.csv(markers, "markers.csv")
+
+# ================================
+# 10. Modify cluster labels: Merge Cluster 3 and Cluster 7 into "Mesenchymal"
+# ================================
+# Ensure we are using Seurat clusters
+clusters <- as.character(Idents(seurat_obj))
+
+cluster_map <- c(
+  "0" = "Dorsal Forebrain NPCs",
+  "1" = "Dorsal Forebrain Neurons",
+  "2" = "Ventral Forebrain Neurons",
+  "3" = "Mesenchymal Cells",
+  "4" = "RSPO+ Cells",
+  "5" = "Early NPCs",
+  "6" = "Ventral Forebrain NPCs",
+  "7" = "Mesenchymal Cells"
+)
+
+cluster_labels <- cluster_map[clusters]
+names(cluster_labels) <- Cells(seurat_obj)
+seurat_obj <- AddMetaData(
+  object = seurat_obj,
+  metadata = cluster_labels,
+  col.name = "cluster_label"
+)
+# ================================
+# 11. Plot t-SNE with new cluster labels
+# ================================
+tsne_df <- as.data.frame(Embeddings(seurat_obj, "tsne"))
+tsne_df$cluster <- seurat_obj$cluster_label
+tsne_df$stage <- seurat_obj$stage
+
+centers <- tsne_df %>%
+  group_by(cluster) %>%
+  summarise(
+    tSNE_1 = mean(tSNE_1),
+    tSNE_2 = mean(tSNE_2),
+    .groups = "drop"
+  )
+
+ggplot(tsne_df, aes(tSNE_1, tSNE_2)) +
+  stat_ellipse(aes(fill = cluster), geom = "polygon", alpha = 0.2) +
+  geom_point(aes(shape = stage), color = "black", size = 2) +
+  scale_shape_manual(values = c(
+    "33" = 16,
+    "35" = 17,
+    "37" = 15,
+    "41" = 18,
+    "65" = 8,
+    "R1 53" = 3,
+    "R2 53" = 4,
+    "R3 58" = 7,
+    "R4 58" = 9
+  )) +
+  theme_classic() +
+  labs(color = "Cluster", shape = "Stage")
+# ================================
+# 12. Save for Shiny
+# ================================
+saveRDS(seurat_obj, "data/seurat_processed.rds")
+saveRDS(Embeddings(seurat_obj, "umap"), "data/umap_coords.rds")
+saveRDS(GetAssayData(seurat_obj), "data/expression_matrix.rds")
+saveRDS(rownames(seurat_obj), "data/genes.rds")
