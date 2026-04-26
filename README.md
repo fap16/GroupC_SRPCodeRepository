@@ -11,6 +11,14 @@ The workflow consists of four main stages:
 
 Where exact replication was not possible (e.g. software constraints, incomplete methodological detail), reasonable approximations were implemented while maintaining consistency with the original study.
 
+**Initial Replication Attempt and Failure to Resolve Cell Clusters** 
+
+Initial attempts to replicate the clustering reported by Camp et al. (2015) were unsuccessful when using the original GENCODE v22 annotation. Feature selection failed during preprocessing (simpleLoess: invalid ‘x’), and principal component analysis returned a “no variance” error, indicating insufficient variability in the expression matrix. 
+
+These issues were traced to a mismatch in chromosome naming conventions between the annotation file and reference genome index (UCSC-style “chr” vs Ensembl-style numeric identifiers), leading to incorrect read assignment and a near-zero variance matrix. 
+
+As a result, PCA and t-SNE failed to resolve distinct cell populations, producing a collapsed and non-informative clustering structure. This demonstrated that biological signal was obscured by upstream technical inconsistencies, requiring correction before further analysis. 
+
 **Automated Batch Alignment (TopHat2)** 
 **tophat_b1.sh**
 
