@@ -1,0 +1,159 @@
+############################################
+# 0. SET WORKING DIRECTORY
+############################################
+
+setwd("/home/fap16/steered_research_project/r_shiny/matrixes")
+
+############################################
+# 1. LOAD PACKAGES
+############################################
+
+library(data.table)
+library(dplyr)
+
+############################################
+# 2. LOAD COUNT MATRIX
+############################################
+
+counts <- read.csv(
+  "johns_camp_organoid_matrix_V2.csv",
+  row.names = 1,
+  check.names = FALSE
+)
+
+stopifnot(is.data.frame(counts))
+
+cat("Initial matrix:", dim(counts), "\n")
+
+############################################
+# 3. ENSURE CORRECT ORIENTATION
+############################################
+
+# Expect: genes x cells
+if (nrow(counts) < ncol(counts)) {
+  warning("Matrix might be transposed — check manually")
+}
+
+############################################
+# 4. LOAD GENCODE GTF
+############################################
+
+gtf <- fread(
+  "gencode.v49.chr_patch_hapl_scaff.annotation.gtf.gz",
+  sep = "\t",
+  header = FALSE
+)
+
+stopifnot(ncol(gtf) == 9)
+
+############################################
+# 5. FILTER FOR GENE FEATURES
+############################################
+
+gtf <- gtf[gtf$V3 == "gene", ]
+
+############################################
+# 6. EXTRACT GENE ID + SYMBOL (CLEAN)
+############################################
+
+gtf$gene_id <- sub('.*gene_id "([^"]+)".*', '\\1', gtf$V9)
+gtf$gene_id <- sub("\\..*", "", gtf$gene_id)   # remove version safely
+
+gtf$gene_name <- sub('.*gene_name "([^"]+)".*', '\\1', gtf$V9)
+
+gene_map <- unique(gtf[, c("gene_id", "gene_name")])
+
+cat("Gene map size:", nrow(gene_map), "\n")
+
+############################################
+# 7. CHECK OVERLAP (CRITICAL QC STEP)
+############################################
+
+overlap <- length(intersect(rownames(counts), gene_map$gene_id))
+
+cat("Gene overlap with GTF:", overlap, "\n")
+
+stopifnot(overlap > 1000)  # safety threshold
+
+############################################
+# 8. MAP GENE SYMBOLS
+############################################
+
+counts$gene_name <- gene_map$gene_name[
+  match(rownames(counts), gene_map$gene_id)
+]
+
+cat("Mapped genes:", sum(!is.na(counts$gene_name)), "\n")
+
+############################################
+# 9. REMOVE UNMAPPED GENES
+############################################
+
+counts <- counts[!is.na(counts$gene_name), ]
+
+stopifnot(nrow(counts) > 100)
+
+############################################
+# 10. COLLAPSE DUPLICATE GENES
+############################################
+
+counts_mat <- as.matrix(counts[, colnames(counts) != "gene_name"])
+gene_ids <- counts$gene_name
+
+counts <- as.data.frame(rowsum(counts_mat, group = gene_ids))
+
+cat("Final gene matrix:", dim(counts), "\n")
+
+############################################
+# 11. LOAD METADATA
+############################################
+
+meta <- read.csv("SraRunTable.csv")
+
+stopifnot(all(c("Run", "stage") %in% colnames(meta)))
+
+rownames(meta) <- meta$Run
+
+############################################
+# 12. ALIGN METADATA SAFELY
+############################################
+
+common <- intersect(colnames(counts), rownames(meta))
+
+counts <- counts[, common, drop = FALSE]
+meta <- meta[common, , drop = FALSE]
+
+stopifnot(all(colnames(counts) == rownames(meta)))
+
+cat("Matched cells:", length(common), "\n")
+
+############################################
+# 13. OPTIONAL: ADD STAGE LABELS
+############################################
+
+counts_stage <- counts
+
+colnames(counts_stage) <- paste0(
+  colnames(counts),
+  "_",
+  meta$stage
+)
+
+############################################
+# 14. FINAL QC CHECKS
+############################################
+
+cat("Final shape:", dim(counts), "\n")
+
+stopifnot(nrow(counts) > 100)
+stopifnot(ncol(counts) > 1)
+
+############################################
+# 15. SAVE OUTPUTS
+############################################
+
+write.csv(counts, "counts_gene_symbols.csv")
+
+write.csv(counts_stage, "counts_with_stage_names.csv")
+
+write.csv(meta, "metadata.csv")
