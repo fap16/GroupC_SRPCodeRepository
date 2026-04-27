@@ -1,8 +1,5 @@
 #PRE 2016 PIPELINE TSNE GENERATION
 
-# ================================
-# 0. Setup
-# ================================
 setwd("/home/fap16/steered_research_project/r_shiny/matrixes")
 
 library(Seurat)
@@ -12,24 +9,17 @@ library(stringr)
 
 set.seed(42)
 
-# ================================
 # 1. Load combined data
-# ================================
 raw_counts <- read.csv("john_counts_with_stage_names.csv", row.names = 1)
 
-# ================================
 # 2. Create Seurat object
-# ================================
 organoid <- CreateSeuratObject(
   counts = raw_counts,
   project = "Camp_Replication",
   min.cells = 3,
   min.features = 200
 )
-
-# ================================
-# 3. Filter cells (FIXED)
-# ================================
+# 3. Filter cells 
 organoid_cells <- grep(
   "33|35|37|41|65|53|58",
   colnames(organoid),
@@ -38,9 +28,7 @@ organoid_cells <- grep(
 
 organoid <- subset(organoid, cells = organoid_cells)
 
-# ================================
 # 4. Extract stage metadata
-# ================================
 organoid$stage <- case_when(
   str_detect(colnames(organoid), "_33") ~ "33d",
   str_detect(colnames(organoid), "_35") ~ "35d",
@@ -51,25 +39,20 @@ organoid$stage <- case_when(
   str_detect(colnames(organoid), "_58") ~ "58d",
 )
 
-# ================================
 # 5. Standard preprocessing
-# ================================
 organoid <- NormalizeData(organoid)
 organoid <- FindVariableFeatures(organoid, selection.method = "vst", nfeatures = 2000)
 organoid <- ScaleData(organoid)
 
-# ================================
-# 6. PCA via FactoMineR (UNCHANGED)
-# ================================
+# 6. PCA via FactoMineR 
 scaled_matrix <- t(as.matrix(
   GetAssayData(organoid, layer = "scale.data")[VariableFeatures(organoid), ]
 ))
 
 res.pca <- PCA(scaled_matrix, ncp = 15, graph = FALSE)
 
-# ================================
-# 7. Extract significant genes (UNCHANGED)
-# ================================
+
+# 7. Extract significant genes 
 pca_stats <- dimdesc(res.pca, proba = 0.001)
 
 paper_features <- c()
@@ -82,11 +65,9 @@ for (i in 1:15) {
     paper_features <- c(paper_features, genes_pc)
   }
 }
-paper_features <- unique(paper_features)
+paper_features <- unique(paper_features
 
-# ================================
 # 8. Inject PCA into Seurat
-# ================================
 pca_embeddings <- res.pca$ind$coord
 colnames(pca_embeddings) <- paste0("PC_", 1:15)
 
@@ -96,9 +77,7 @@ organoid[["pca"]] <- CreateDimReducObject(
   assay = "RNA"
 )
 
-# ================================
-# 9. t-SNE (UNCHANGED)
-# ================================
+# 9. run t-SNE 
 organoid <- RunTSNE(
   organoid,
   features = paper_features,
@@ -107,16 +86,14 @@ organoid <- RunTSNE(
   check_duplicates = FALSE
 )
 
-# ================================
+
 # 10. Clustering
-# ================================
+
 organoid <- FindNeighbors(organoid, dims = 1:15)
 organoid <- FindClusters(organoid, resolution = 1.0)
 organoid <- BuildClusterTree(organoid, dims = 1:15, reorder = TRUE)
 
-# ================================
-# 11. Rename clusters (UNCHANGED)
-# ================================
+# 11. Rename clusters based on markers 
 organoid <- RenameIdents(organoid, 
                          "3" = "Dorsal Forebrain Neurons",  
                          "2" = "Forebrain NPCs",           
@@ -130,9 +107,7 @@ organoid <- RenameIdents(organoid,
                          "9" = "Late Midbrain Progs"
 )
 
-# ================================
-# 12. Custom t-SNE plot (MATCH FIGURE STYLE)
-# ================================
+# 12. create tSNE plot
 tsne_df <- as.data.frame(Embeddings(organoid, "tsne"))
 tsne_df$cluster <- Idents(organoid)
 tsne_df$stage <- organoid$stage
