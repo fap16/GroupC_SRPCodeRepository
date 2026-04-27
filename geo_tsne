@@ -1,9 +1,7 @@
 #GEO TSNE 
 
-# ================================
-# 0. Setup
-# ================================
-library(Seurat)
+# 0. Setup 
+ library(Seurat)
 library(dplyr)
 library(ggplot2)
 library(stringr)
@@ -11,9 +9,8 @@ library(stringr)
 setwd("/home/fap16/steered_research_project/r_shiny")
 set.seed(42)
 
-# ================================
+ 
 # 1. Load data
-# ================================
 raw_df <- read.table(
   gzfile("GSE75140_hOrg.fetal.master.data.frame.txt.gz"),
   header = TRUE,
@@ -40,15 +37,11 @@ expr_matrix[is.na(expr_matrix)] <- 0
 # genes x cells
 expr_matrix <- t(expr_matrix)
 
-# ================================
-# 2. Create Seurat object (IMPORTANT FIX)
-# ================================
+#2. Create seurat
 seurat_obj <- CreateSeuratObject(counts = expr_matrix)
 
-# ================================
-# 3. OPTIONAL: subset organoid-only cells
-# (EDIT THIS PATTERN TO YOUR DATA)
-# ================================o
+
+# 3. Filter organoid only cells & regions
 organoid_cells <- grep(
   "Org33d|Org35d|Org37d|Org41d|Org65d|reg1_53d|reg2_53d|reg3_58d|reg4_58d",
   colnames(seurat_obj),
@@ -57,9 +50,8 @@ organoid_cells <- grep(
 
 seurat_obj <- subset(seurat_obj, cells = organoid_cells)
 
-# ================================
+
 # 4. Extract stage metadata from cell_id
-# ================================
 seurat_obj$stage <- case_when(
   str_detect(Cells(seurat_obj), "Org33d") ~ "33",
   str_detect(Cells(seurat_obj), "Org35d") ~ "35",
@@ -72,16 +64,13 @@ seurat_obj$stage <- case_when(
   str_detect(Cells(seurat_obj), "reg4_58d") ~ "R4 58",
   TRUE ~ "Other"
 )
-# ================================
+
 # 5. Standard pre-processing
-# ================================
 seurat_obj <- NormalizeData(seurat_obj)
 seurat_obj <- FindVariableFeatures(seurat_obj, nfeatures = 2000)
 seurat_obj <- ScaleData(seurat_obj, features = VariableFeatures(seurat_obj))
 
-# ================================
-# 6. PCA (ONLY on selected cells)
-# ================================
+# 6. PCA
 seurat_obj <- RunPCA(
   seurat_obj,
   features = VariableFeatures(seurat_obj),
@@ -92,30 +81,26 @@ ElbowPlot(seurat_obj)
 
 pcs_use <- 1:7
 
-# ================================
+
 # 7. Clustering
-# ================================
 seurat_obj <- FindNeighbors(seurat_obj, dims = pcs_use)
 seurat_obj <- FindClusters(seurat_obj, resolution = 1.0)
 
-#UMAP
+#UMAP (test)
 
 seurat_obj <- RunPCA(seurat_obj, npcs = 30)
 seurat_obj <- RunUMAP(seurat_obj, dims = 1:20)
 seurat_obj <- RunTSNE(seurat_obj, dims = 1:20)
 
-# ================================
-# 8. t-SNE (Fig 3D style)
-# ================================
+
+# 8. run t-SNE 
 seurat_obj <- RunTSNE(
   seurat_obj,
   dims = pcs_use,
   perplexity = 5
 )
 
-# ================================
-# 9. Markers
-# ================================
+# 9. identify markers
 markers <- FindAllMarkers(
   seurat_obj,
   only.pos = TRUE,
@@ -125,9 +110,7 @@ markers <- FindAllMarkers(
 
 write.csv(markers, "markers.csv")
 
-# ================================
-# 10. Modify cluster labels: Merge Cluster 3 and Cluster 7 into "Mesenchymal"
-# ================================
+# 10. Set cluster labels
 # Ensure we are using Seurat clusters
 clusters <- as.character(Idents(seurat_obj))
 
@@ -149,9 +132,8 @@ seurat_obj <- AddMetaData(
   metadata = cluster_labels,
   col.name = "cluster_label"
 )
-# ================================
-# 11. Plot t-SNE with new cluster labels
-# ================================
+ 
+# 11.plot tSNE w ggplot2
 tsne_df <- as.data.frame(Embeddings(seurat_obj, "tsne"))
 tsne_df$cluster <- seurat_obj$cluster_label
 tsne_df$stage <- seurat_obj$stage
@@ -180,9 +162,8 @@ ggplot(tsne_df, aes(tSNE_1, tSNE_2)) +
   )) +
   theme_classic() +
   labs(color = "Cluster", shape = "Stage")
-# ================================
-# 12. Save for Shiny
-# ================================
+
+#export 
 saveRDS(seurat_obj, "data/seurat_processed.rds")
 saveRDS(Embeddings(seurat_obj, "umap"), "data/umap_coords.rds")
 saveRDS(GetAssayData(seurat_obj), "data/expression_matrix.rds")
