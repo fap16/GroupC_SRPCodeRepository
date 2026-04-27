@@ -1,7 +1,23 @@
 #WebApp code - Organoid Explorer using pre & post sc RNA sequencing Analysis 
-  #Annotations/explanations of this code can be found on our github repository.
 
-#Import libraries & packages
+#PIPELINE
+#1. import libraries & packages
+#2. set pathways for LAMP
+#3. Load all data & save as dataframes 
+#4. set up helper section for layout, data processing & EXTRACTION
+#5. create tabs & fill UI
+#6. render connection between user input & output - display specific output
+#7. launch app
+
+#general code workflow 
+  #set up df --> select gene --> extract data based on user input = make neat specific df --> display plot based on input 
+
+#APP GOALS
+#- side by side gene query tabs
+  #- user input based interactivity
+#- figure comparison
+
+#1. Import libraries & packages
 
 library(shiny)
 library(bslib)
@@ -10,7 +26,7 @@ library(dplyr)
 library(Seurat)
 
 
-# PATHS
+#2. set pathways & resource path to maintain stability on LAMP
 
 app_dir  <- normalizePath(".", winslash = "/", mustWork = TRUE)
 data_dir <- file.path(app_dir, "data")
@@ -19,7 +35,7 @@ www_dir  <- file.path(app_dir, "www")
 # Explicit static path
 addResourcePath("static", www_dir)
 
-# STARTUP CHECKS
+#2a. General start up checks - ensure directories & figures exist before code run: implemented to ensure paths could be found following lamp file heierachy
 
 required_dirs <- c(data_dir, www_dir)
 missing_dirs <- required_dirs[!dir.exists(required_dirs)]
@@ -84,7 +100,7 @@ if (length(missing_image_files) > 0) {
 }
 
 
-# LOAD DATA
+#3. Load all data in 2 sections: Pre & Post = effective organisation
 
 # -------- PRE 2016 --------
 pre_umap_mat <- readRDS(file.path(data_dir, "pre_2016_umap_coords.rds"))
@@ -127,8 +143,9 @@ post_umap_df$cluster <- as.factor(Idents(post_seurat)[post_common_cells])
 post_genes <- rownames(post_expr_mat)
 
 
-# HELPERS
+#4. Set up helper section - foundational for structure and reactivity 
 
+#a. For all text to be consistently styled 
 tab_description <- function(text) {
   tags$p(
     text,
@@ -136,6 +153,7 @@ tab_description <- function(text) {
   )
 }
 
+#b. Uniform section titlles 
 section_title <- function(text) {
   tags$h4(
     text,
@@ -143,6 +161,7 @@ section_title <- function(text) {
   )
 }
 
+#c. Setting images as static to prevent caheing issues 
 static_img_src <- function(filename) {
   full_path <- file.path(www_dir, filename)
   
@@ -153,6 +172,8 @@ static_img_src <- function(filename) {
   version_tag <- as.integer(file.info(full_path)$mtime)
   paste0("static/", filename, "?v=", version_tag)
 }
+
+#d. sets ui layout into neat columns 
 
 image_panel_half <- function(src, label, description = NULL, img_height = "420px") {
   column(
@@ -226,6 +247,9 @@ image_panel_full <- function(src, label, description = NULL, img_height = "420px
   )
 }
 
+#e. KEY - assisting in data processing
+   # - calculates avg expression per cluster, and % of cell expression relative to n amount of cells 
+      # = produces a neat dataframe per gene for extraction once the user inputs a gene 
 make_expr_summary <- function(df) {
   df %>%
     group_by(cluster) %>%
@@ -237,14 +261,15 @@ make_expr_summary <- function(df) {
     )
 }
 
+#produces said neat df for specific extraction
 make_gene_df <- function(expr_mat, selected_gene, common_cells, umap_df) {
-  validate(
+  validate( #ensures gene exists
     need(selected_gene %in% rownames(expr_mat), "Selected gene not found in expression matrix.")
   )
   
-  expr <- expr_mat[selected_gene, , drop = TRUE]
+  expr <- expr_mat[selected_gene, , drop = TRUE] #extracts specific gene 
   
-  df <- data.frame(
+  df <- data.frame( #combines dataset containing UMAP coords relative to correct cluster labels & expression
     cell_id = common_cells,
     expr = as.numeric(expr),
     umap_1 = umap_df$umap_1,
@@ -252,12 +277,13 @@ make_gene_df <- function(expr_mat, selected_gene, common_cells, umap_df) {
     cluster = umap_df$cluster,
     stringsAsFactors = FALSE
   )
-  
+  #removes missings vals 
   df <- df[!is.na(df$expr), , drop = FALSE]
-  df$expr_scaled <- log1p(df$expr)
+  df$expr_scaled <- log1p(df$expr) #calculates log exp for scaling - needed as scRNAseq is v uneven
   df
 }
 
+#find general position of each cluster in UMAP & sets it = allows labels to be displayed 
 cluster_centers <- function(df) {
   df %>%
     group_by(cluster) %>%
@@ -268,6 +294,8 @@ cluster_centers <- function(df) {
     )
 }
 
+#f. plot layout setup - sets up UI
+  #violin plots 
 make_plot <- function(df, plot_type, color_scale = "Viridis", point_size = 5, show_labels = FALSE) {
   if (plot_type == "violin") {
     plot_ly(
@@ -283,21 +311,21 @@ make_plot <- function(df, plot_type, color_scale = "Viridis", point_size = 5, sh
         xaxis = list(title = "Cluster"),
         yaxis = list(title = "Expression")
       )
-  } else {
-    p <- plot_ly(
+  } else { #set as secondary option
+    p <- plot_ly( #interactive foundation set via plotly package
       df,
       x = ~umap_1,
       y = ~umap_2,
       type = "scatter",
       mode = "markers",
       marker = list(
-        color = df$expr_scaled,
+        color = df$expr_scaled, #sets colour of inidivdual points on expression scale
         colorscale = color_scale,
         size = point_size,
         showscale = TRUE,
         colorbar = list(title = "log1p(expr)")
       ),
-      text = ~paste0(
+      text = ~paste0( #hover section = sets output
         "Cell: ", cell_id,
         "<br>Cluster: ", cluster,
         "<br>Expr: ", round(expr, 3)
@@ -308,11 +336,11 @@ make_plot <- function(df, plot_type, color_scale = "Viridis", point_size = 5, sh
         xaxis = list(title = "UMAP 1"),
         yaxis = list(title = "UMAP 2")
       )
-    
-    if (isTRUE(show_labels)) {
+    #shows cluster numbers - IMPROVE - set to black: not visible currently
+    if (isTRUE(show_labels)) { 
       centers <- cluster_centers(df)
       
-      p <- p %>%
+      p <- p %>% 
         add_text(
           data = centers,
           x = ~umap_1,
@@ -330,7 +358,7 @@ make_plot <- function(df, plot_type, color_scale = "Viridis", point_size = 5, sh
   }
 }
 
-# UI
+# 5. UI - fluidPage & tabPanel used for consistent clean design
 
 ui <- fluidPage(
   theme = bs_theme(version = 5, bootswatch = "darkly"),
@@ -339,7 +367,7 @@ ui <- fluidPage(
   tabsetPanel(
     
     tabPanel(
-      "About",
+      "About", #tab1
       fluidRow(
         column(
           10, offset = 1,
@@ -389,7 +417,7 @@ ui <- fluidPage(
       )
     ),
     
-    tabPanel(
+    tabPanel(#tab 2 
       "Pre-2016 Gene Query",
       tab_description("Explore gene expression in the pre-2016 cerebral organoid dataset using UMAP and violin plots. This data was generated using FactoMineR packages."),
       
@@ -437,7 +465,7 @@ ui <- fluidPage(
       )
     ),
     
-    tabPanel(
+    tabPanel( #tab3
       "Post-2016 Gene Query",
       tab_description("Explore gene expression in the post-2016 cerebral organoid dataset using UMAP and violin plots. This dataset was created using a STAR analysis pipeline."),
       
@@ -485,7 +513,7 @@ ui <- fluidPage(
       )
     ),
     
-    tabPanel(
+    tabPanel(#tab 4
       "Monocle Comparison",
       tab_description("The figures below show the reconstructed AP-to-BP-to-neuron lineage in the fetal neocortex, using Monocle 2 as a tool to order cells along a pseudotemporal path, that matches the cortical zones."),
       
@@ -511,7 +539,7 @@ ui <- fluidPage(
     ),
     
   
-    tabPanel(
+    tabPanel( #tab 5
       "Fig 3D (tSNE) Comparison",
       tab_description("The figures below show the clustering formed by the organoid cells in the Pre and Post-2016 datasets. Fetal cell data was filtered out for accurate recreation."),
       
@@ -536,7 +564,7 @@ ui <- fluidPage(
       )
     ),
     
-    tabPanel(
+    tabPanel( #tab 6 
       "Fig 3E Comparison",
       tab_description("The figures below identify each cluster by marker-gene expression, showing which clusters correspond to cortex-like cells versus other lineages."),
       
@@ -553,7 +581,7 @@ ui <- fluidPage(
         )
       )
     ),
-    tabPanel(
+    tabPanel( #tab7
       "Fig 3F Comparison",
       tab_description("The violin plots below validate the regional identity of the microdissected organoid samples by comparing FOXG1, NEUROD6, and OTX2 expression against fetal cortex, distinguishing dorsal cortex-like regions from ventral forebrain-like ones."),
       
@@ -572,7 +600,7 @@ ui <- fluidPage(
     ),
   
     
-    tabPanel(
+    tabPanel( #tab8
       "Cell Composition Comparison",
       tab_description("Compare cell type composition between pre-2016 and post-2016 cerebral organoid datasets."),
       
@@ -592,12 +620,13 @@ ui <- fluidPage(
   )
 )
 
-# ================================
-# SERVER
-# ================================
+#6. Server Set up 
+
+#sets input & output base down
 server <- function(input, output, session) {
-  
-  pre_data <- eventReactive(input$pre_go, {
+
+#creates dynamic output via eventReactive - connects input then automatically creates necessary neat datframe for specific data extraction
+  pre_data <- eventReactive(input$pre_go, { #responds upon search = req
     req(input$pre_gene)
     make_gene_df(
       expr_mat = pre_expr_mat,
@@ -606,7 +635,8 @@ server <- function(input, output, session) {
       umap_df = pre_umap_df
     )
   })
-  
+
+#mirrored process for pipleine 2 
   post_data <- eventReactive(input$post_go, {
     req(input$post_gene)
     make_gene_df(
@@ -616,20 +646,21 @@ server <- function(input, output, session) {
       umap_df = post_umap_df
     )
   })
-  
-  output$pre_plot <- renderPlotly({
+
+#outputs plot based on processed neat dataframe specific to input
+  output$pre_plot <- renderPlotly({ #KEY FUNC - allows correct plot to be presented 
     df <- pre_data()
     req(df)
-    make_plot(
+    make_plot( #creates plot based on user options selected
       df = df,
-      plot_type = input$pre_plot_type,
-      color_scale = input$pre_color_scale,
-      point_size = input$pre_point_size,
-      show_labels = input$pre_show_labels
+      plot_type = input$pre_plot_type, #UMAP or violin
+      color_scale = input$pre_color_scale,#colour scale 
+      point_size = input$pre_point_size, #point size
+      show_labels = input$pre_show_labels #cluster label visibility
     )
   })
   
-  output$post_plot <- renderPlotly({
+  output$post_plot <- renderPlotly({ 
     df <- post_data()
     req(df)
     make_plot(
@@ -641,7 +672,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$pre_table <- renderTable({
+  output$pre_table <- renderTable({ #displays data tables specific to the gene selected  
     df <- pre_data()
     req(df)
     make_expr_summary(df)
@@ -654,7 +685,5 @@ server <- function(input, output, session) {
   })
 }
 
-# ================================
-# RUN APP
-# ================================
-shinyApp(ui, server)
+#. LAUNCH APP
+shinyApp(ui, server) #connect user input w backend output
