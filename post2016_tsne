@@ -16,7 +16,7 @@ a_data <- read.csv("asads_counts_with_stage_names.csv", row.names = 1)
 
 #convert to matrix (prevent break)
 a_matrix <- as.matrix(a_data)
-# ================================
+ 
 # 2. Create Seurat object 
 
 organoid1 <- CreateSeuratObject(
@@ -26,9 +26,8 @@ organoid1 <- CreateSeuratObject(
   min.features = 200
 )
 
-# ================================
-# 3. Filter cells (FIXED)
-# ================================
+ 
+# 3. Filter cells  
 organoid1_cells1 <- grep(
   "_(33|35|37|41|65|53|58)$",
   colnames(organoid1),
@@ -46,16 +45,14 @@ organoid1$stage <- str_extract(cells, "(?<=_)\\d+")
 organoid1$stage <- paste0(organoid1$stage, "d")
 
 
-# ================================
+ 
 # 5. Standard preprocessing
-# ================================
 organoid1 <- NormalizeData(organoid1)
 organoid1 <- FindVariableFeatures(organoid1, selection.method = "vst", nfeatures = 2000)
 organoid1 <- ScaleData(organoid1)
 
-# ================================
-# 6. PCA (ONLY on selected cells)
-# ================================
+ 
+# 6. PCA (ONLY on filtered cells not all)
 organoid1  <- RunPCA(
   organoid1,
   features = VariableFeatures(organoid1),
@@ -65,9 +62,9 @@ organoid1  <- RunPCA(
 ElbowPlot(organoid1)
 
 pcs_use <- 1:7
-# ================================
+
 # 7. Clustering
-# ================================
+
 organoid1 <- FindNeighbors(organoid1, dims = pcs_use)
 organoid1 <- FindClusters(organoid1, resolution = 1.0)
 
@@ -75,18 +72,17 @@ organoid1 <- FindClusters(organoid1, resolution = 1.0)
 organoid1 <- RunPCA(organoid1, npcs = 30)
 organoid1 <- RunTSNE(organoid1, dims = 1:20)
 
-# ================================
-# 8. t-SNE (Fig 3D style)
-# ================================
+
+# 8. t-SNE
 organoid1 <- RunTSNE(
   organoid1,
   dims = pcs_use,
   perplexity = 5
 )
 
-# ================================
-# 9. Markers
-# ================================
+
+# 9. Markers - identify top 10
+
 markers1 <- FindAllMarkers(
   organoid1,
   only.pos = TRUE,
@@ -96,9 +92,8 @@ markers1 <- FindAllMarkers(
 
 write.csv(markers, "markers1.csv")
 
-# ================================
-# 10. Modify cluster labels: Merge Cluster 1&2, and 4&6 
-# ================================
+
+# 10. Set cluster labels
 # Ensure we are using Seurat clusters
 clusters <- as.character(Idents(organoid1))
 
@@ -122,9 +117,8 @@ organoid1<- AddMetaData(
 )
 
 Idents(organoid1) <- "cluster_label"
-# ================================
-# 12. Custom t-SNE plot (MATCH FIGURE STYLE)
-# ================================
+
+# 12. plot tSNE
 tsne_df <- as.data.frame(Embeddings(organoid1, "tsne"))
 tsne_df$cluster <- Idents(organoid1)
 tsne_df$stage <- organoid1$stage
