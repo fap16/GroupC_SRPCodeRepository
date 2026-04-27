@@ -1,0 +1,145 @@
+# ============================================================
+# MONOCLE TRAJECTORY ANALYSIS (FULL FIXED PIPELINE)
+# ============================================================
+
+# 0. Load libraries
+library(monocle)
+library(ggplot2)
+
+# 1. Input file
+input_csv <- "/home/rm810/Downloads/camp_organoid_matrix_V2.csv"
+
+if (!file.exists(input_csv)) {
+  stop("file not found. Check path.")
+}
+
+cat("file found\n")
+
+# 2. Load data
+raw_table <- read.csv(
+  input_csv,
+  header = TRUE,
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+cat("Input matrix size:", dim(raw_table), "\n")
+
+# 3. FORCE UNIQUE COLUMN NAMES (CRITICAL FIX)
+
+colnames(raw_table) <- make.unique(colnames(raw_table))
+
+# 4. Extract gene IDs + count matrix
+gene_ids_vec <- as.character(raw_table$gene_id)
+
+count_table <- raw_table[, setdiff(colnames(raw_table), "gene_id"), drop = FALSE]
+
+# Convert safely to numeric
+count_table[] <- lapply(count_table, function(x) as.numeric(as.character(x)))
+count_table[is.na(count_table)] <- 0
+
+count_matrix <- as.matrix(count_table)
+
+# 5. CLEAN GENE NAMES
+gene_ids_vec[is.na(gene_ids_vec) | gene_ids_vec == ""] <-
+  paste0("Gene_", seq_along(gene_ids_vec))
+
+gene_ids_vec <- make.unique(gene_ids_vec)
+
+rownames(count_matrix) <- gene_ids_vec
+
+cat("Matrix dimensions:", dim(count_matrix), "\n")
+
+# 6. FILTER LOW EXPRESSION GENES
+count_matrix <- count_matrix[rowSums(count_matrix) > 0, , drop = FALSE]
+
+min_cells <- max(10, round(0.05 * ncol(count_matrix)))
+keep_genes <- rowSums(count_matrix > 0) >= min_cells
+
+count_matrix <- count_matrix[keep_genes, , drop = FALSE]
+
+cat("Filtered matrix size:", dim(count_matrix), "\n")
+
+# 7. LOG TRANSFORM
+log_expr_matrix <- log2(count_matrix + 1)
+
+# CRITICAL: FORCE UNIQUE CELL NAMES
+colnames(log_expr_matrix) <- make.unique(colnames(log_expr_matrix))
+
+stopifnot(!any(duplicated(colnames(log_expr_matrix))))
+
+# 8. PHENOTYPE DATA (CLEAN)
+sample_metadata <- data.frame(
+  row.names = colnames(log_expr_matrix),
+  sample_name = colnames(log_expr_matrix),
+  stringsAsFactors = FALSE
+)
+
+sample_metadata$sample_name <- make.unique(sample_metadata$sample_name)
+
+# 9. FEATURE DATA (REQUIRED)
+feature_metadata <- data.frame(
+  gene_short_name = rownames(log_expr_matrix),
+  row.names = rownames(log_expr_matrix),
+  stringsAsFactors = FALSE
+)
+
+# 10. CREATE MONOCLE OBJECT (SAFE)
+monocle_cds <- newCellDataSet(
+  log_expr_matrix,
+  phenoData = new("AnnotatedDataFrame", data = sample_metadata),
+  featureData = new("AnnotatedDataFrame", data = feature_metadata),
+  expressionFamily = uninormal()
+)
+# 11. NORMALIZATION
+monocle_cds <- estimateSizeFactors(monocle_cds)
+monocle_cds <- detectGenes(monocle_cds, min_expr = 0.1)
+
+# 12. ORDERING GENES
+expressed_genes <- rownames(
+  subset(fData(monocle_cds),
+         num_cells_expressed >= min_cells)
+)
+
+expr_mat <- exprs(monocle_cds)[expressed_genes, , drop = FALSE]
+
+gene_vars <- apply(expr_mat, 1, var)
+gene_vars <- sort(gene_vars, decreasing = TRUE)
+
+top_genes <- names(gene_vars)[1:min(3000, length(gene_vars))]
+
+monocle_cds <- setOrderingFilter(monocle_cds, top_genes)
+
+cat("Ordering genes used:", length(top_genes), "\n")
+
+# 13. DIMENSION REDUCTION
+monocle_cds <- reduceDimension(
+  monocle_cds,
+  max_components = 2,
+  method = "DDRTree",
+  norm_method = "none"
+)
+
+monocle_cds <- orderCells(monocle_cds)
+
+cat("Tajectory complete\n")
+
+# 14. PLOT
+plot_cell_trajectory(monocle_cds, color_by = "State")
+
+# Optional:
+# plot_cell_trajectory(monocle_cds, color_by = "Pseudotime")
+
+# 15. SAVE OUTPUTS
+saveRDS(monocle_cds, "monocle_object.rds")
+
+write.csv(
+  pData(monocle_cds),
+  "monocle_metadata.csv",
+  row.names = FALSE
+)
+
+cat("\n===== DONE =====\n")
+cat("Outputs saved in working directory:\n")
+print(getwd())
+
